@@ -1,6 +1,10 @@
 # dm41
 
-<img src="img/dm41.svg" align="left" width="150" height="150">
+<img src="img/dm41.svg" align="right" width="150">
+
+**Your DM41X calculator in the terminal: programs, memory and modules. Written in Rust.**
+
+![Version](https://img.shields.io/badge/version-0.2.2-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
 
 A twin of the [SwissMicros DM41X](https://www.swissmicros.com) calculator in
 the terminal. It shows the programs, registers, flags and X-Memory files from
@@ -13,7 +17,7 @@ calculator loads.
 
 Part of the [Fe₂O₃](https://isene.org/fe2o3/) suite.
 
-<br clear="left"/>
+![dm41 showing a program](img/screenshot.png)
 
 ## Use
 
@@ -52,6 +56,8 @@ The Modules tab lists every `.MOD` file on the calculator's disk, with its
 XROM number and the names of its functions. dm41 keeps a copy of the modules
 in `~/.dm41/disk`, so the tab also works with the calculator unplugged.
 
+![The Modules tab](img/screenshot-modules.png)
+
 A setup is a list of the modules to plug in (an `.m41` file). The calculator
 writes one with each full backup; those stay as they are. `n` copies one
 under a new name, and Space in Modules plugs a module in or out of it. A new
@@ -59,6 +65,8 @@ setup goes to the disk's `MODS` folder. Load it on the calculator with Module
 menu, Load Modules, Load Flash and AM Lists. The memory stays as it is.
 
 Program listings use the names from the modules of the picked setup.
+
+![The Setups tab](img/screenshot-setups.png)
 
 ## On the command line
 
