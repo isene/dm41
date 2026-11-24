@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 (2026-11-24)
+
+- A setup can carry programs, X-Memory files and flags: Space in Programs,
+  X-Memory or Flags puts each in or out of the picked setup's memory.
+- Such a setup is written as a full backup in `BACKUP`, which the
+  calculator loads with Settings menu, Restore from Backup.
+- `n` on a full backup copies its memory too.
+
 ## 0.2.3 (2026-11-24)
 
 - Program listings take the colours of hp41.vim: labels gold, jumps purple,

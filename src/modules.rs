@@ -136,6 +136,7 @@ impl Module {
 
 /// A setup: the module list the calculator loads with Module menu, Load
 /// Modules. `A` lines are plugged in, `N` lines only sit in flash.
+#[derive(Clone)]
 pub struct Setup {
     pub name: String,
     pub path: PathBuf,
@@ -204,6 +205,9 @@ pub fn setups(disk: &Path) -> Vec<Setup> {
         group.sort_by_key(|s| s.name.to_lowercase());
         v.extend(group);
     }
+    // a setup dm41 made has its memory in BACKUP too; the MODS copy is the one to show
+    let mine: Vec<String> = v.iter().filter(|s| !s.backup).map(|s| s.name.to_lowercase()).collect();
+    v.retain(|s| !s.backup || !mine.contains(&s.name.to_lowercase()));
     v
 }
 

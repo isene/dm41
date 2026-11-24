@@ -3,9 +3,12 @@
 
 use crate::focal::{self, Names, Step};
 
-/// The memory of an HP-41CX: 1024 registers of 56 bits (7 bytes).
+/// The memory of an HP-41CX: 1024 registers of 56 bits (7 bytes), and the
+/// CPU lines that end the file, kept as they are.
+#[derive(Clone)]
 pub struct State {
     pub regs: Vec<u64>,
+    pub cpu: String,
 }
 
 /// A program in main memory: its global labels and its lines.
@@ -21,11 +24,14 @@ impl Program {
     }
 }
 
-/// A file in X-Memory.
+/// A file in X-Memory, with its name and header registers as they are.
+#[derive(Clone)]
 pub struct XmFile {
     pub name: String,
     pub kind: u8,
     pub regs: Vec<u64>,
+    pub name_reg: u64,
+    pub head: u64,
 }
 
 impl XmFile {
@@ -103,9 +109,15 @@ impl State {
             return Err("not a DM41X state file".into());
         }
         let mut regs = vec![0u64; 1024];
+        let mut cpu = String::new();
         for line in text.lines().skip(1) {
-            let Some((addr, rest)) = line.split_once("  ") else { continue };
-            let Ok(a) = usize::from_str_radix(addr, 16) else { continue };
+            let reg_line = line.split_once("  ").and_then(|(addr, rest)| Some((usize::from_str_radix(addr, 16).ok()?, rest)));
+            let Some((a, rest)) = reg_line else {
+                cpu.push_str(line);
+                cpu.push('\n');
+                continue;
+            };
+            let addr = &line[..line.find(' ').unwrap_or(0)];
             for (k, hex) in rest.split_whitespace().enumerate() {
                 let v = u64::from_str_radix(hex, 16).map_err(|_| format!("bad register {hex} at {addr}"))?;
                 if let Some(r) = regs.get_mut(a + k) {
@@ -113,7 +125,21 @@ impl State {
                 }
             }
         }
-        Ok(State { regs })
+        Ok(State { regs, cpu })
+    }
+
+    /// The state as a .d41 file. Like the calculator, it leaves out each line
+    /// whose four registers are all zero.
+    pub fn text(&self) -> String {
+        let mut out = String::from("DM41\n");
+        for (i, four) in self.regs.chunks(4).enumerate().filter(|(_, f)| f.iter().any(|&v| v != 0)) {
+            out.push_str(&format!("{:02x}  ", i * 4));
+            for v in four {
+                out.push_str(&format!("{v:014x}  "));
+            }
+            out.push('\n');
+        }
+        out + &self.cpu
     }
 
     fn reg(&self, a: u64) -> u64 {
@@ -173,11 +199,149 @@ impl State {
         split(focal::decode(&self.code(), names))
     }
 
+    /// Each program's bytes, from the byte after the END above it down to its
+    /// own END, so the nulls inside stay. .END. is left out; a last program
+    /// that ends at .END. gets an END of its own, as GTO ".." gives it.
+    pub fn program_code(&self) -> Vec<Vec<u8>> {
+        let code = self.code();
+        let mut out = Vec::new();
+        let mut start = 0;
+        for s in focal::decode(&code, &Names::new()).iter().filter(|s| s.end) {
+            if s.text == "END" {
+                out.push(code[start..s.at + 3].to_vec());
+            } else if code[start..s.at].iter().any(|&b| b != 0) {
+                out.push([&code[start..s.at], &[0xC0, 0x00, 0x09][..]].concat());
+            }
+            start = s.at + 3;
+        }
+        out
+    }
+
+    /// Each program with its bytes, as program_code() gives them.
+    pub fn program_list(&self, names: &Names) -> Vec<(Program, Vec<u8>)> {
+        self.program_code().into_iter().filter_map(|c| Some((split(focal::decode(&c, names)).into_iter().next()?, c))).collect()
+    }
+
+    /// This memory with other programs, in this order, and .END. after them
+    /// in the last three bytes of its register. Each global label and END
+    /// points at the one above it: the distance in bytes, as registers and
+    /// bytes left over. Jumps inside a program count bytes too, so a program
+    /// keeps working wherever it lands. The calculator then stands at .END.,
+    /// line 00, as after GTO "..". Fails when the programs do not fit.
+    pub fn with_programs(&self, progs: &[Vec<u8>]) -> Result<State, String> {
+        let (top, old_end) = (self.curtain(), self.end_reg());
+        if top <= old_end || top > 0x200 {
+            return Err("program memory is not where it should be".into());
+        }
+        // key assignments and buffers fill registers from 0x0C0 up; the first empty one is free
+        let low = (0x0C0..old_end).find(|&a| self.reg(a) == 0).unwrap_or(old_end);
+        let mut bytes = progs.concat();
+        let n = bytes.len();
+        bytes.resize(n + (7 - (n + 3) % 7) % 7, 0);
+        bytes.extend([0xC0, 0x00, self.code().last().copied().unwrap_or(0x20)]);
+        let need = (bytes.len() / 7) as u64;
+        if need > top - low {
+            return Err(format!("{} registers too few for these programs", need - (top - low)));
+        }
+        let mut chain = Vec::new();
+        let mut start = 0;
+        for p in progs {
+            for s in focal::decode(p, &Names::new()) {
+                if s.end || s.text.starts_with("LBL \"") {
+                    chain.push(start + s.at);
+                }
+            }
+            start += p.len();
+        }
+        chain.push(bytes.len() - 3);
+        for k in 0..chain.len() {
+            let d = if k == 0 { 0 } else { chain[k] - chain[k - 1] };
+            let link = ((d % 7) << 9) | (d / 7);
+            bytes[chain[k]] = 0xC0 | (link >> 8) as u8;
+            bytes[chain[k] + 1] = link as u8;
+        }
+        let mut st = self.clone();
+        st.regs[low as usize..top as usize].fill(0);
+        for (i, &b) in bytes.iter().enumerate() {
+            st.regs[(top - 1) as usize - i / 7] |= (b as u64) << (8 * (6 - i % 7));
+        }
+        st.regs[0x00D] = (st.regs[0x00D] & !0xFFF) | (top - need);
+        let pc = n as i64 - 1; // the last byte of the last END, or the byte above the top
+        let (reg, k) = (top as i64 - 1 - pc.div_euclid(7), 6 - pc.rem_euclid(7));
+        st.regs[0x00B] = 0;
+        st.regs[0x00C] = ((k as u64) << 12) | reg as u64;
+        st.regs[0x00F] &= !0xFFF;
+        Ok(st)
+    }
+
+    pub fn set_flag(&mut self, n: u32, on: bool) {
+        let bit = 1u64 << (55 - n);
+        if on {
+            self.regs[0x00E] |= bit;
+        } else {
+            self.regs[0x00E] &= !bit;
+        }
+    }
+
     /// The X-Memory files. The directory starts at the top of the
     /// X-Functions memory (0x0BF) and runs down, then on into the memory
     /// modules at 0x2EF and 0x3EF. Each file is a name register, a header
     /// register (type and size) and its data. All ones ends the list.
     pub fn xm_files(&self) -> Vec<XmFile> {
+        let order = self.xm_order();
+        let mut files = Vec::new();
+        let mut i = 0;
+        while i + 1 < order.len() {
+            let name_reg = self.reg(order[i]);
+            if name_reg == 0 || name_reg == 0xFF_FFFF_FFFF_FFFF {
+                break;
+            }
+            let head = self.reg(order[i + 1]);
+            let size = field(head, 2, 0) as usize;
+            let regs = order.iter().skip(i + 2).take(size).map(|&a| self.reg(a)).collect();
+            let name = focal::hp_text(&bytes_of(std::iter::once(name_reg))).trim_end().to_string();
+            files.push(XmFile { name, kind: field(head, 13, 13) as u8, regs, name_reg, head });
+            i += 2 + size;
+        }
+        files
+    }
+
+    /// This memory with other X-Memory files, in this order. A header that
+    /// names its own address gets the new one, all ones ends the list, and
+    /// the working file keeps its number among the files, or there is none.
+    pub fn with_xm(&self, files: &[XmFile]) -> Result<State, String> {
+        let order = self.xm_order();
+        let need: usize = files.iter().map(|f| 2 + f.regs.len()).sum();
+        if need > order.len() {
+            return Err(format!("{} registers too few in X-Memory", need - order.len()));
+        }
+        let mut st = self.clone();
+        for &a in &order {
+            st.regs[a as usize] = 0;
+        }
+        let mut i = 0;
+        for f in files {
+            let at = order[i + 1];
+            let head = if field(f.head, 12, 10) != 0 { f.head & !(0xFFF << 40) | at << 40 } else { f.head };
+            st.regs[order[i] as usize] = f.name_reg;
+            st.regs[at as usize] = head;
+            for (k, &v) in f.regs.iter().enumerate() {
+                st.regs[order[i + 2 + k] as usize] = v;
+            }
+            i += 2 + f.regs.len();
+        }
+        if let Some(&a) = order.get(i) {
+            st.regs[a as usize] = 0xFF_FFFF_FFFF_FFFF;
+        }
+        let old = self.xm_files();
+        let w = field(self.reg(0x040), 11, 9) as usize;
+        let w = old.get(w.wrapping_sub(1)).and_then(|o| files.iter().position(|f| f.name == o.name)).map_or(0, |p| p + 1);
+        st.regs[0x040] = st.regs[0x040] & !(0xFFF << 36) | (w as u64) << 36;
+        Ok(st)
+    }
+
+    /// The X-Memory registers in the order files fill them.
+    fn xm_order(&self) -> Vec<u64> {
         let mut order = Vec::new();
         let (mut top, mut head) = (field(self.reg(0x040), 2, 0), 0x040);
         for _ in 0..3 {
@@ -188,21 +352,7 @@ impl State {
             let next = field(self.reg(head), 5, 3);
             (top, head) = (next, (next & 0xF00) | 1);
         }
-        let mut files = Vec::new();
-        let mut i = 0;
-        while i + 1 < order.len() {
-            let name = self.reg(order[i]);
-            if name == 0 || name == 0xFF_FFFF_FFFF_FFFF {
-                break;
-            }
-            let h = self.reg(order[i + 1]);
-            let size = field(h, 2, 0) as usize;
-            let regs = order.iter().skip(i + 2).take(size).map(|&a| self.reg(a)).collect();
-            let name = focal::hp_text(&bytes_of(std::iter::once(name))).trim_end().to_string();
-            files.push(XmFile { name, kind: field(h, 13, 13) as u8, regs });
-            i += 2 + size;
-        }
-        files
+        order
     }
 }
 
@@ -282,7 +432,7 @@ mod tests {
 
     /// A made-up state: SIZE 2, one program, a flag, a text file in X-Memory.
     fn sample() -> State {
-        let mut s = State { regs: vec![0; 1024] };
+        let mut s = State { regs: vec![0; 1024], cpu: String::new() };
         s.regs[3] = 0x01457400000002; // X = 145.74
         s.regs[2] = 0x95000000000998; // Y = -5E-2
         s.regs[0x00D] = (0x169 << 24) | (0x1FE << 12) | 0x1FC; // curtain 0x1FE, .END. at 0x1FC
@@ -336,5 +486,132 @@ mod tests {
             .unwrap();
         assert_eq!(show(s.stack()[1].1), "14.3618");
         assert!(State::parse("hello").is_err());
+    }
+
+    /// The global labels and ENDs as the calculator finds them: from .END.
+    /// up along the links, as (register, byte) places.
+    fn walk_chain(s: &State) -> Vec<(u64, u64)> {
+        let at = |i: i64| ((s.curtain() as i64 - 1 - i.div_euclid(7)) as u64, (6 - i.rem_euclid(7)) as u64);
+        let byte_at = |i: i64| {
+            let (r, k) = at(i);
+            byte(s.reg(r), k as u32)
+        };
+        let top = s.curtain() as i64;
+        let mut i = (top - 1 - s.end_reg() as i64) * 7 + 4; // .END. starts at byte 2
+        let mut out = vec![at(i)];
+        loop {
+            let link = ((byte_at(i) as i64 & 0x0F) << 8) | byte_at(i + 1) as i64;
+            if link == 0 {
+                return out;
+            }
+            i -= (link & 0x1FF) * 7 + (link >> 9);
+            out.push(at(i));
+        }
+    }
+
+    /// The states read on this machine: the last one and the full backups.
+    fn real_states() -> Vec<(String, State)> {
+        let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".dm41");
+        let mut files = vec![home.join("last.d41")];
+        if let Ok(rd) = std::fs::read_dir(home.join("disk/BACKUP")) {
+            files.extend(rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "d41")));
+        }
+        files.iter().filter_map(|p| Some((std::fs::read_to_string(p).ok()?, p))).map(|(t, p)| {
+            assert_eq!(State::parse(&t).unwrap().text(), t, "{} writes back as it was", p.display());
+            (p.display().to_string(), State::parse(&t).unwrap())
+        }).collect()
+    }
+
+    #[test]
+    fn a_state_writes_back_as_it_was_read() {
+        let s = sample();
+        let back = State::parse(&s.text()).unwrap();
+        assert_eq!(back.regs, s.regs);
+        real_states();
+    }
+
+    #[test]
+    fn the_same_programs_give_the_same_memory() {
+        for (name, s) in real_states() {
+            let t = s.with_programs(&s.program_code()).unwrap();
+            let area = s.end_reg() as usize..s.curtain() as usize;
+            assert_eq!(t.regs[area.clone()], s.regs[area], "{name}: program memory");
+            assert_eq!(t.regs[0x00D], s.regs[0x00D], "{name}: register c");
+            let t = s.with_xm(&s.xm_files()).unwrap();
+            let files: Vec<String> = t.xm_files().iter().map(|f| f.name.clone()).collect();
+            let was: Vec<String> = s.xm_files().iter().map(|f| f.name.clone()).collect();
+            assert_eq!(files, was, "{name}: X-Memory files");
+            assert_eq!(t.regs[0x040], s.regs[0x040], "{name}: X-Memory header");
+            for (a, b) in t.xm_files().iter().zip(s.xm_files()) {
+                assert_eq!((a.head, &a.regs), (b.head, &b.regs), "{name}: file {}", a.name);
+            }
+        }
+    }
+
+    #[test]
+    fn programs_taken_out_and_put_back_keep_the_chain() {
+        let mut states = real_states();
+        states.push(("sample".into(), sample()));
+        for (name, s) in states {
+            let mut code = s.program_code();
+            if code.is_empty() {
+                continue;
+            }
+            let links = |c: &[Vec<u8>]| -> usize {
+                1 + c.iter().flat_map(|p| focal::decode(p, &Names::new())).filter(|x| x.end || x.text.starts_with("LBL \"")).count()
+            };
+            let first = code.remove(0);
+            let t = s.with_programs(&code).unwrap();
+            assert_eq!(walk_chain(&t).len(), links(&code), "{name}: chain without the first program");
+            let text = |c: &[Vec<u8>]| -> Vec<String> {
+                c.iter().flat_map(|p| focal::decode(p, &Names::new())).map(|x| x.text).collect()
+            };
+            assert_eq!(text(&t.program_code()), text(&code), "{name}: the other programs stay as they were");
+            assert_eq!(t.size(), s.size(), "{name}: data registers stay");
+            code.push(first.clone());
+            let u = t.with_programs(&code).unwrap();
+            assert_eq!(walk_chain(&u).len(), links(&code), "{name}: chain with it at the end");
+            assert_eq!(text(&u.program_code()[code.len() - 1..]), text(&[first]), "{name}: it comes back whole");
+        }
+    }
+
+    #[test]
+    fn a_program_that_ends_at_end_gets_an_end_of_its_own() {
+        let s = sample();
+        let t = s.with_programs(&s.program_code()).unwrap();
+        let lines: Vec<String> = t.programs(&Names::new()).iter().flat_map(|p| p.steps.clone()).map(|x| x.text).collect();
+        assert_eq!(lines, ["LBL \"AB\"", "2", "*", "END", ".END."]);
+        assert_eq!(walk_chain(&t).len(), 3);
+    }
+
+    #[test]
+    fn programs_that_do_not_fit_are_refused() {
+        let s = sample();
+        let big = vec![vec![0x40; 5000]];
+        assert!(s.with_programs(&big).is_err());
+        let t = s.with_programs(&[]).unwrap();
+        assert!(t.programs(&Names::new()).iter().all(|p| p.name() == ".END."));
+        assert_eq!(walk_chain(&t).len(), 1);
+    }
+
+    #[test]
+    fn x_memory_files_come_and_go() {
+        let s = sample();
+        let t = s.with_xm(&[]).unwrap();
+        assert!(t.xm_files().is_empty());
+        let u = t.with_xm(&s.xm_files()).unwrap();
+        assert_eq!(xm_lines(&u.xm_files()[0], &Names::new()), ["AB", "C"]);
+        let mut f = s.xm_files();
+        f[0].head |= 0x0BE << 40;
+        let v = s.with_xm(&[f[0].clone(), f[0].clone()]).unwrap();
+        assert_eq!(field(v.xm_files()[1].head, 12, 10), 0x0BB, "a header gets its new address");
+    }
+
+    #[test]
+    fn flags_are_set_and_cleared() {
+        let mut s = sample();
+        s.set_flag(27, true);
+        s.set_flag(21, false);
+        assert!(s.flag(27) && !s.flag(21));
     }
 }

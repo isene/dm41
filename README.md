@@ -39,7 +39,7 @@ Part of the [Fe₂O₃](https://isene.org/fe2o3/) suite.
 | `e` | Edit the program in scribe; `NAME.raw` is saved when scribe ends |
 | `r` | Run the program in rpnx |
 | `s` | Save `NAME.raw`; in Setups, copy the setup to the calculator |
-| Space | In Modules, plug the module in or out of the setup |
+| Space | In Modules, plug the module in or out of the setup; in Programs, X-Memory and Flags, put it in or out of the setup's memory |
 | `n` | In Setups, make a new setup with the same modules |
 | `R` | Read the state again |
 | `q` | Quit |
@@ -65,6 +65,25 @@ setup goes to the disk's `MODS` folder. Load it on the calculator with Module
 menu, Load Modules, Load Flash and AM Lists. The memory stays as it is.
 
 Program listings use the names from the modules of the picked setup.
+
+## A setup with a memory of its own
+
+A setup made with `n` can also carry programs, X-Memory files and flags.
+Pick it in Setups, then press Space in Programs, X-Memory or Flags: each
+program, file or flag goes in or out of the setup's memory. A green dot
+marks what the setup has, and a blue one what only the setup has.
+
+A new setup starts with the calculator's memory, or with the memory of the
+backup it was copied from.
+
+dm41 writes such a setup as a full backup: `NAME.b41`, `NAME.d41`,
+`NAME.m41` in the disk's `BACKUP` folder, with `NAME.ram` and `NAME.cst`
+copied from the newest backup. Load it on the calculator with Settings
+menu, Restore from Backup, then NAME. That loads the modules and the
+memory together.
+
+Make a full backup on the calculator first, so you can go
+back. dm41 never writes over the calculator's own backups.
 
 ![The Setups tab](img/screenshot-setups.png)
 

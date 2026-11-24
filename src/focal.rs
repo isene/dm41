@@ -7,11 +7,13 @@ use std::collections::HashMap;
 /// module files on the calculator's disk.
 pub type Names = HashMap<(u8, u8), String>;
 
-/// One program line: its text, and whether it ends a program.
+/// One program line: its text, whether it ends a program, and where its
+/// bytes start in the code it came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Step {
     pub text: String,
     pub end: bool,
+    pub at: usize,
 }
 
 /// The HP-41 character set as shown here. Codes 32 to 125 are ASCII; 126 is
@@ -237,7 +239,7 @@ pub fn decode(code: &[u8], names: &Names) -> Vec<Step> {
                 (1 + n, quoted(&code[(i + 1).min(code.len())..(i + 1 + n).min(code.len())]))
             }
         };
-        out.push(Step { text, end });
+        out.push(Step { text, end, at: i });
         i += len;
     }
     out
