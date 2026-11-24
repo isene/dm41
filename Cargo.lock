@@ -41,7 +41,7 @@ dependencies = [
 
 [[package]]
 name = "dm41"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "fe2o3-crust",
 ]

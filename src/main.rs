@@ -301,26 +301,32 @@ struct App {
     foot: Pane,
 }
 
-/// A listing line coloured by what it does.
+/// A listing line coloured by what it does, the same as in hp41.vim: labels
+/// gold, jumps purple, stops red, tests orange, registers and flags blue,
+/// text green, numbers cyan.
+fn step_colour(text: &str) -> u8 {
+    let (word, arg) = text.split_once(' ').unwrap_or((text, ""));
+    match word {
+        "LBL" => GOLD,
+        _ if text.starts_with('"') => 114,
+        "GTO" | "XEQ" => 177,
+        "RTN" | "END" | ".END." | "STOP" | "PROMPT" | "OFF" if arg.is_empty() => 203,
+        "ISG" | "DSE" => 208,
+        _ if word.contains('?') => 208,
+        "STO" | "RCL" | "ST+" | "ST-" | "ST*" | "ST/" | "X<>" | "ARCL" | "ASTO" | "VIEW" | "SF" | "CF"
+            if !arg.is_empty() =>
+        {
+            111
+        }
+        "XROM" => DIM,
+        _ if text.contains(|c: char| c.is_ascii_digit()) && text.chars().all(|c| "0123456789.-E".contains(c)) => 81,
+        _ => 252,
+    }
+}
+
 fn colour_step(text: &str) -> String {
-    let c = if text.starts_with("LBL") {
-        return style::fg(&style::bold(text), GOLD);
-    } else if text.starts_with('"') {
-        114
-    } else if text.starts_with("GTO") || text.starts_with("XEQ") {
-        177
-    } else if text == "END" || text == ".END." {
-        203
-    } else if text.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.')
-        || text.starts_with('E') && text[1..].starts_with(|c: char| c.is_ascii_digit() || c == '-')
-    {
-        81
-    } else if text.starts_with("XROM") {
-        DIM
-    } else {
-        252
-    };
-    style::fg(text, c)
+    let c = step_colour(text);
+    if c == GOLD { style::fg(&style::bold(text), c) } else { style::fg(text, c) }
 }
 
 impl App {
@@ -910,6 +916,31 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn steps_take_the_colours_of_hp41_vim() {
+        for (step, c) in [
+            ("LBL \"CLR\"", GOLD),
+            ("\"⊢ M2\"", 114),
+            ("\"R?\"", 114),
+            ("GTO 00", 177),
+            (".END.", 203),
+            ("PROMPT", 203),
+            ("X>Y?", 208),
+            ("FS?C 25", 208),
+            ("ISG 07", 208),
+            ("STO IND X", 111),
+            ("X<> 05", 111),
+            ("X<>Y", 252),
+            ("STOFLAG", 252),
+            ("-", 252),
+            ("-1.5E-3", 81),
+            ("E3", 81),
+            ("XROM 05,03", DIM),
+        ] {
+            assert_eq!(step_colour(step), c, "{step}");
+        }
+    }
 
     /// Every program in the last state read on this machine encodes to a
     /// .raw file that decodes to the same lines, with the names of the

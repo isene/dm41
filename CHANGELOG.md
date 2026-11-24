@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 (2026-11-24)
+
+- Program listings take the colours of hp41.vim: labels gold, jumps purple,
+  stops red, tests orange, registers and flags blue, text green, numbers cyan.
+- A minus sign is no longer shown as a number.
+
 ## 0.2.2 (2026-11-24)
 
 - dm41 mounts the calculator's disk when it is plugged in and unmounts it on

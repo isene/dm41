@@ -4,7 +4,7 @@
 
 **Your DM41X calculator in the terminal: programs, memory and modules. Written in Rust.**
 
-![Version](https://img.shields.io/badge/version-0.2.2-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
+![Version](https://img.shields.io/badge/version-0.2.3-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
 
 A twin of the [SwissMicros DM41X](https://www.swissmicros.com) calculator in
 the terminal. It shows the programs, registers, flags and X-Memory files from
