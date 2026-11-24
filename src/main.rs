@@ -21,13 +21,16 @@ const HELP: &str = "dm41: the memory of a SwissMicros DM41X in the terminal
   -h, --help   -v, --version
 
 Keys: Left/Right tab, Up/Down pick, PgUp/PgDn scroll, R read again, q quit
+      B copies the calculator's whole disk to ~/.dm41/backups
   Programs  e edit in scribe (NAME.raw is saved when scribe ends)
-            r run in rpnx    s save NAME.raw
+            r run in rpnx    s save NAME.raw    l load a .raw or a listing
+  X-Memory  e edit a text file in scribe    l load a text file
   Modules   Space plugs the module in or out of the setup
   Setups    Up/Down picks the setup the listings use
             n new setup from this one    s copy it to the calculator
   In a setup made with n, Space in Programs, X-Memory and Flags puts that
-  program, file or flag in or out of the setup's memory.
+  program, file or flag in or out of the setup's memory. Loading a file
+  and editing put the new version in the setup.
 
 The calculator shows its disk in USB disk mode (File menu). dm41 mounts it
 at /mnt/dm41x when a sudoers line allows (see the README), and unmounts it
@@ -283,6 +286,57 @@ fn put_setup(s: &Setup) -> String {
     }
 }
 
+/// The local date and time, as 2026-11-24_2315.
+fn stamp() -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    // SAFETY: localtime_r only writes the tm we hand it.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let t = now as libc::time_t;
+    unsafe { libc::localtime_r(&t, &mut tm) };
+    format!("{:04}-{:02}-{:02}_{:02}{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min)
+}
+
+/// Copy every file on the calculator's disk to ~/.dm41/backups/DATE_TIME.
+fn backup_disk() -> String {
+    fn copy(from: &Path, to: &Path, count: &mut (u64, u64)) -> std::io::Result<()> {
+        std::fs::create_dir_all(to)?;
+        for e in std::fs::read_dir(from)?.flatten() {
+            let t = e.file_type()?;
+            if t.is_dir() {
+                copy(&e.path(), &to.join(e.file_name()), count)?;
+            } else if t.is_file() {
+                count.1 += std::fs::copy(e.path(), to.join(e.file_name()))?;
+                count.0 += 1;
+            }
+        }
+        Ok(())
+    }
+    let Some((m, _)) = mount() else { return "mount the calculator's disk first: R mounts it".into() };
+    let name = stamp();
+    let mut count = (0, 0);
+    match copy(&m, &home().join("backups").join(&name), &mut count) {
+        Ok(_) => format!(
+            "{} files ({} kB) copied to ~/.dm41/backups/{name}, with the memory as the calculator last saved it",
+            count.0,
+            count.1 / 1024
+        ),
+        Err(e) => format!("backup stopped after {} files: {e}", count.0),
+    }
+}
+
+/// A path typed at a prompt, with ~/ as the home folder.
+fn expand(p: &str) -> PathBuf {
+    match p.trim().strip_prefix("~/") {
+        Some(rest) => PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(rest),
+        None => PathBuf::from(p.trim()),
+    }
+}
+
+/// The name a program goes by: its first global label, as in the lists.
+fn prog_name(bytes: &[u8], names: &Names) -> String {
+    state::split(focal::decode(bytes, names)).first().map_or_else(String::new, |p| p.name())
+}
+
 /// The memory a setup made by dm41 has, if it has one yet.
 fn set_memory(s: &Setup) -> Option<State> {
     State::parse(&std::fs::read_to_string(disk().join("BACKUP").join(format!("{}.d41", s.name))).ok()?).ok()
@@ -525,6 +579,12 @@ impl App {
             }
             let files = m.xm_files();
             self.xmarks = xm.iter().map(|f| files.iter().any(|g| g.name == f.name) as u8).collect();
+            // a file both have is shown as the setup has it, since edits go there
+            for f in xm.iter_mut() {
+                if let Some(g) = files.iter().find(|g| g.name == f.name) {
+                    *f = g.clone();
+                }
+            }
             for g in files {
                 if !xm.iter().any(|f| f.name == g.name) {
                     xm.push(g);
@@ -546,22 +606,34 @@ impl App {
     /// Put the picked program, X-Memory file or flag in or out of the
     /// setup's memory, and write the setup as a full backup.
     fn pick(&mut self) {
-        let Some(mem) = &self.mem else {
+        let Some(mem) = self.mem.clone() else {
             self.note = "pick a setup of your own in Setups first; n there makes one".into();
             return;
         };
         let new = match self.tab {
             Tab::Programs => {
-                let Some(k) = self.progs.get(self.sel).map(steps_of) else { return };
+                let Some(p) = self.progs.get(self.sel) else { return };
+                let k = steps_of(p);
                 if k.is_empty() {
                     self.note = ".END. marks the end of memory; it is always there".into();
                     return;
                 }
                 let mut code = mem.program_list(&self.names);
-                match code.iter().position(|(p, _)| steps_of(p) == k) {
-                    Some(i) => drop(code.remove(i)),
-                    None => code.extend(self.st.program_list(&self.names).into_iter().find(|(p, _)| steps_of(p) == k)),
-                }
+                let Some(i) = code.iter().position(|(q, _)| steps_of(q) == k) else {
+                    // in it goes: the working copy when there is one, else the calculator's version
+                    let bytes = match std::fs::read_to_string(self.working_copy(p)) {
+                        Ok(text) => match focal::encode(&text, &self.names) {
+                            Ok(b) => state::program_bytes(&b),
+                            Err(e) => return self.note = format!("{}: {e}", p.name()),
+                        },
+                        Err(_) => match self.st.program_list(&self.names).into_iter().find(|(q, _)| steps_of(q) == k) {
+                            Some((_, c)) => c,
+                            None => return,
+                        },
+                    };
+                    return self.put_program(bytes);
+                };
+                code.remove(i);
                 mem.with_programs(&code.into_iter().map(|(_, c)| c).collect::<Vec<_>>())
             }
             Tab::Xm => {
@@ -586,15 +658,117 @@ impl App {
             _ => return,
         };
         match new {
-            Ok(m) => {
-                let src = self.newest_backup();
-                if let Some(s) = self.setups.get(self.setup) {
-                    self.note = put_set(s, &m, src.as_deref());
-                }
-                self.mem = Some(m);
-                self.fill();
-            }
+            Ok(m) => self.commit(m),
             Err(e) => self.note = e,
+        }
+    }
+
+    /// Keep a new memory for the setup, and write the setup as a full backup.
+    fn commit(&mut self, m: State) {
+        let src = self.newest_backup();
+        if let Some(s) = self.setups.get(self.setup) {
+            self.note = put_set(s, &m, src.as_deref());
+        }
+        self.mem = Some(m);
+        self.fill();
+    }
+
+    /// Put a program in the setup's memory, in place of one with its name.
+    fn put_program(&mut self, bytes: Vec<u8>) {
+        let Some(mem) = &self.mem else { return };
+        let name = prog_name(&bytes, &self.names);
+        let mut code: Vec<Vec<u8>> = vec![];
+        let mut put = Some(bytes);
+        for (p, c) in mem.program_list(&self.names) {
+            code.push(if p.name() == name { put.take().unwrap_or(c) } else { c });
+        }
+        code.extend(put);
+        match mem.with_programs(&code) {
+            Ok(m) => self.commit(m),
+            Err(e) => self.note = e,
+        }
+    }
+
+    /// Put an X-Memory file in the setup's memory, in place of one with its name.
+    fn put_file(&mut self, f: XmFile) {
+        let Some(mem) = &self.mem else { return };
+        let mut files = mem.xm_files();
+        match files.iter().position(|g| g.name == f.name) {
+            Some(i) => files[i] = f,
+            None => files.push(f),
+        }
+        match mem.with_xm(&files) {
+            Ok(m) => self.commit(m),
+            Err(e) => self.note = e,
+        }
+    }
+
+    /// True when a setup of dm41's own is picked, else says what to do.
+    fn has_setup(&mut self) -> bool {
+        if self.mem.is_none() {
+            self.note = "pick a setup of your own in Setups first; n there makes one".into();
+        }
+        self.mem.is_some()
+    }
+
+    /// Load a program from a .raw file or a listing into the setup.
+    fn load_program(&mut self) {
+        if !self.has_setup() {
+            return;
+        }
+        let Some(path) = self.foot.ask_or_cancel(" Program file (.raw or a listing): ", "~/.dm41/prog/") else { return };
+        let path = expand(&path);
+        let bytes = match std::fs::read(&path) {
+            Ok(b) if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("raw")) => b,
+            Ok(b) => match focal::encode(&String::from_utf8_lossy(&b), &self.names) {
+                Ok(b) => b,
+                Err(e) => return self.note = format!("{}: {e}", path.display()),
+            },
+            Err(e) => return self.note = format!("{}: {e}", path.display()),
+        };
+        self.put_program(state::program_bytes(&bytes));
+    }
+
+    /// Load a text file into the setup's X-Memory, a line to a record.
+    fn load_text(&mut self) {
+        if !self.has_setup() {
+            return;
+        }
+        let Some(path) = self.foot.ask_or_cancel(" Text file: ", "~/") else { return };
+        let path = expand(&path);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => return self.note = format!("{}: {e}", path.display()),
+        };
+        let stem: String = path.file_stem().map(|x| x.to_string_lossy().to_uppercase()).unwrap_or_default().chars().take(7).collect();
+        let Some(name) = self.foot.ask_or_cancel(" Name in X-Memory, 7 characters at most: ", &stem) else { return };
+        match state::text_file(name.trim(), &text) {
+            Ok(f) => self.put_file(f),
+            Err(e) => self.note = e,
+        }
+    }
+
+    /// Edit the picked X-Memory text file in scribe; the setup gets the result.
+    fn edit_text(&mut self) {
+        let Some(f) = self.xm.get(self.sel).cloned() else { return };
+        if f.kind != 3 {
+            self.note = "only text files open in scribe".into();
+            return;
+        }
+        if !self.has_setup() {
+            return;
+        }
+        let file = home().join("xm").join(format!("{}.txt", file_name(&f.name)));
+        let lines = state::xm_lines(&f, &self.names);
+        let text = if lines.is_empty() { String::new() } else { lines.join("\n") + "\n" };
+        if let Err(e) = std::fs::create_dir_all(home().join("xm")).and_then(|_| std::fs::write(&file, text)) {
+            return self.note = format!("{}: {e}", file.display());
+        }
+        if self.run_child("scribe", &file) {
+            match std::fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|t| state::text_file(&f.name, &t)) {
+                Ok(g) => self.put_file(g),
+                Err(e) => self.note = e,
+            }
         }
     }
 
@@ -687,6 +861,14 @@ impl App {
         if self.run_child("scribe", &file) {
             let text = std::fs::read_to_string(&file).unwrap_or_default();
             self.note = save_raw(&name, &text, &self.names);
+            // a setup that has this program gets the new version
+            let has = |m: &State| m.program_list(&self.names).iter().any(|(p, _)| p.name() == name);
+            if self.mem.as_ref().is_some_and(has) {
+                match focal::encode(&text, &self.names) {
+                    Ok(b) => self.put_program(state::program_bytes(&b)),
+                    Err(e) => self.note = format!("{name}: {e}"),
+                }
+            }
         }
     }
 
@@ -730,10 +912,11 @@ impl App {
 
     fn render_foot(&mut self) {
         let keys = match self.tab {
-            Tab::Programs => "e edit  r run in rpnx  s save .raw  R read again  q quit",
+            Tab::Programs => "e edit  r run in rpnx  s save .raw  l load a file  R read again  q quit",
+            Tab::Xm => "e edit a text file  l load a text file  ↑↓ pick  q quit",
             Tab::Modules => "Space plug in or out of the setup  ↑↓ pick  PgUp/PgDn scroll  q quit",
             Tab::Setups => "n new setup from this one  s copy it to the calculator  ↑↓ pick  q quit",
-            _ => "←→ tab  ↑↓ pick  PgUp/PgDn scroll  R read again  q quit",
+            _ => "←→ tab  ↑↓ pick  PgUp/PgDn scroll  B back up the disk  R read again  q quit",
         };
         let keys = match self.tab {
             Tab::Programs | Tab::Xm | Tab::Flags if self.mem.is_some() => format!("Space in or out of the setup  {keys}"),
@@ -1049,6 +1232,10 @@ impl App {
                 "HOME" => self.right.top(),
                 "END" => self.right.bottom(),
                 "e" if self.tab == Tab::Programs => self.edit(),
+                "e" if self.tab == Tab::Xm => self.edit_text(),
+                "l" if self.tab == Tab::Programs => self.load_program(),
+                "l" if self.tab == Tab::Xm => self.load_text(),
+                "B" => self.note = backup_disk(),
                 "r" if self.tab == Tab::Programs => self.run_rpnx(),
                 "s" if self.tab == Tab::Programs => self.save(),
                 " " if self.tab == Tab::Modules => self.toggle(),

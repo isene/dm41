@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 (2026-11-24)
+
+- `B` copies the calculator's whole disk to `~/.dm41/backups/DATE_TIME`.
+- `l` loads a program from a `.raw` file or a listing into the setup.
+- Editing a program the setup has gives the setup the new version; Space
+  puts your edited version in.
+- X-Memory text files: `l` loads a text file, one record per line, and
+  `e` edits one in scribe.
+
 ## 0.3.0 (2026-11-24)
 
 - A setup can carry programs, X-Memory files and flags: Space in Programs,

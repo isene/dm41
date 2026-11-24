@@ -375,6 +375,41 @@ pub fn split(steps: Vec<Step>) -> Vec<Program> {
 }
 
 /// What an X-Memory file holds, as lines.
+/// A text file for X-Memory: each line a record (its length, then its
+/// characters), 0xFF after the last, in as few registers as hold them.
+pub fn text_file(name: &str, text: &str) -> Result<XmFile, String> {
+    let hp = |c: char, what: &str| focal::from_hp_char(c).ok_or(format!("{what}: the calculator has no {c}"));
+    let mut b = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let chars = line.replace('\t', " ").chars().map(|c| hp(c, &format!("line {}", i + 1))).collect::<Result<Vec<u8>, _>>()?;
+        if chars.len() > 254 {
+            return Err(format!("line {} is longer than 254 characters", i + 1));
+        }
+        b.push(chars.len() as u8);
+        b.extend(chars);
+    }
+    b.push(0xFF);
+    b.resize(b.len().div_ceil(7) * 7, 0);
+    let pack = |c: &[u8]| c.iter().fold(0u64, |a, &x| a << 8 | x as u64);
+    let regs: Vec<u64> = b.chunks(7).map(pack).collect();
+    let mut n = [b' '; 7];
+    for (k, c) in name.chars().take(7).enumerate() {
+        n[k] = hp(c, "the name")?;
+    }
+    let name = focal::hp_text(&n).trim_end().to_string();
+    Ok(XmFile { name, kind: 3, head: 3 << 52 | regs.len() as u64, regs, name_reg: pack(&n) })
+}
+
+/// A program's bytes from a .raw file or an encoded listing, up to and with
+/// its first END; one without an END gets one.
+pub fn program_bytes(raw: &[u8]) -> Vec<u8> {
+    match focal::decode(raw, &Names::new()).iter().find(|s| s.end) {
+        Some(s) if s.text == "END" => raw[..s.at + 3].to_vec(),
+        Some(s) => [&raw[..s.at], &[0xC0, 0x00, 0x09][..]].concat(),
+        None => [raw, &[0xC0, 0x00, 0x09][..]].concat(),
+    }
+}
+
 pub fn xm_lines(f: &XmFile, names: &Names) -> Vec<String> {
     match f.kind {
         1 => focal::decode(&bytes_of(f.regs.iter().copied()), names)
@@ -592,6 +627,33 @@ mod tests {
         let t = s.with_programs(&[]).unwrap();
         assert!(t.programs(&Names::new()).iter().all(|p| p.name() == ".END."));
         assert_eq!(walk_chain(&t).len(), 1);
+    }
+
+    #[test]
+    fn a_text_file_reads_back_as_written() {
+        let f = text_file("NOTES", "first line\n\nΣ and ⊢\tok\n").unwrap();
+        assert_eq!(xm_lines(&f, &Names::new()), ["first line", "", "Σ and ⊢ ok"]);
+        assert_eq!((f.name.as_str(), f.kind, f.regs.len()), ("NOTES", 3, 4));
+        assert_eq!(f.name_reg, 0x4E4F5445532020);
+        assert!(text_file("X", "ok\nnot ☃").err().unwrap().contains("line 2"));
+        assert!(text_file("X", &"a".repeat(255)).is_err());
+        let t = sample().with_xm(&[f.clone()]).unwrap();
+        assert_eq!(xm_lines(&t.xm_files()[0], &Names::new()), xm_lines(&f, &Names::new()));
+    }
+
+    #[test]
+    fn a_program_file_is_cut_at_its_end() {
+        let names = Names::new();
+        let texts = |b: &[u8]| -> Vec<String> { focal::decode(b, &names).into_iter().map(|s| s.text).collect() };
+        // a .raw file ends in the .END. form of END; it becomes a plain END
+        let mut raw = focal::encode("LBL \"A\"\n1\nEND\n", &names).unwrap();
+        raw.extend([0x00, 0x00]);
+        assert_eq!(texts(&program_bytes(&raw)), ["LBL \"A\"", "1", "END"]);
+        let bare = focal::encode("LBL \"A\"\n1\n", &names).unwrap();
+        assert_eq!(texts(&program_bytes(&bare)), ["LBL \"A\"", "1", "END"]);
+        let mut two = program_bytes(&raw);
+        two.extend(program_bytes(&bare));
+        assert_eq!(program_bytes(&two), program_bytes(&raw));
     }
 
     #[test]

@@ -33,7 +33,7 @@ pub fn hp_char(b: u8) -> char {
     }
 }
 
-fn from_hp_char(c: char) -> Option<u8> {
+pub fn from_hp_char(c: char) -> Option<u8> {
     match c {
         ' '..='}' => Some(c as u8),
         'Σ' => Some(126),

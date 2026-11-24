@@ -36,7 +36,9 @@ Part of the [Fe₂O₃](https://isene.org/fe2o3/) suite.
 | Left / Right | Change tab: Programs, Registers, Flags, X-Memory, Modules, Setups |
 | Up / Down | Pick a program, a file, a module or a setup |
 | PgUp / PgDn | Scroll the right side |
-| `e` | Edit the program in scribe; `NAME.raw` is saved when scribe ends |
+| `e` | Edit the program in scribe; `NAME.raw` is saved when scribe ends. In X-Memory, edit a text file |
+| `l` | Load a program (a `.raw` or a listing), or in X-Memory a text file, into the setup |
+| `B` | Copy the calculator's whole disk to `~/.dm41/backups` |
 | `r` | Run the program in rpnx |
 | `s` | Save `NAME.raw`; in Setups, copy the setup to the calculator |
 | Space | In Modules, plug the module in or out of the setup; in Programs, X-Memory and Flags, put it in or out of the setup's memory |
@@ -76,6 +78,12 @@ marks what the setup has, and a blue one what only the setup has.
 A new setup starts with the calculator's memory, or with the memory of the
 backup it was copied from.
 
+`l` loads a program from a `.raw` file or a listing, and in X-Memory a
+text file, one record per line. Both go into the setup, in place of one
+with the same name. When you edit a program the setup has, the setup gets
+the new version when scribe ends; Space puts your edited version in, if
+you have one. `e` in X-Memory edits a text file the same way.
+
 dm41 writes such a setup as a full backup: `NAME.b41`, `NAME.d41`,
 `NAME.m41` in the disk's `BACKUP` folder, with `NAME.ram` and `NAME.cst`
 copied from the newest backup. Load it on the calculator with Settings
@@ -86,6 +94,13 @@ Make a full backup on the calculator first, so you can go
 back. dm41 never writes over the calculator's own backups.
 
 ![The Setups tab](img/screenshot-setups.png)
+
+## Backing up the calculator
+
+`B` copies every file on the calculator's disk to
+`~/.dm41/backups/DATE_TIME`. The memory in it is what the calculator last
+saved, as a state file or a full backup, so save one first. To go back,
+copy the files back to the disk.
 
 ## On the command line
 
