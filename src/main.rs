@@ -28,6 +28,7 @@ Keys: Left/Right tab, Up/Down pick, PgUp/PgDn scroll, R read again, q quit
   Modules   Space plugs the module in or out of the setup
   Setups    Up/Down picks the setup the listings use
             n new setup from this one    s copy it to the calculator
+            D deletes it from the calculator; a copy goes to ~/.dm41/deleted
   In a setup made with n, Space in Programs, X-Memory and Flags puts that
   program, file or flag in or out of the setup's memory. Loading a file
   and editing put the new version in the setup.
@@ -322,6 +323,46 @@ fn backup_disk() -> String {
         ),
         Err(e) => format!("backup stopped after {} files: {e}", count.0),
     }
+}
+
+/// The files of setup NAME under root (the calculator's disk or its copy):
+/// BACKUP/NAME.* and, for a setup that is not a full backup, MODS/NAME.m41.
+fn setup_files(root: &Path, name: &str, backup: bool) -> Vec<PathBuf> {
+    let same = |p: &Path| p.file_stem().is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(name));
+    let m41 = |p: &Path| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("m41"));
+    let mut v = vec![];
+    for (dir, all) in [("BACKUP", true), ("MODS", false)] {
+        if dir == "MODS" && backup {
+            continue;
+        }
+        if let Ok(rd) = std::fs::read_dir(root.join(dir)) {
+            v.extend(rd.flatten().map(|e| e.path()).filter(|p| p.is_file() && same(p) && (all || m41(p))));
+        }
+    }
+    v.sort();
+    v
+}
+
+/// Move the files of setup NAME off the calculator's disk (m) into keep,
+/// and out of the copy in disk. Copies all before removing any, so a
+/// failed copy leaves the calculator as it was. Gives the number moved.
+fn delete_setup_files(m: &Path, disk: &Path, keep: &Path, name: &str, backup: bool) -> Result<usize, String> {
+    let files = setup_files(m, name, backup);
+    if files.is_empty() {
+        return Err(format!("{name} has no files on the calculator's disk"));
+    }
+    for f in &files {
+        let to = keep.join(f.strip_prefix(m).unwrap_or(f));
+        let copied = to.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::copy(f, &to));
+        copied.map_err(|e| format!("{}: {e}; nothing was deleted", f.display()))?;
+    }
+    for f in &files {
+        std::fs::remove_file(f).map_err(|e| format!("{}: {e}", f.display()))?;
+    }
+    for f in setup_files(disk, name, backup) {
+        let _ = std::fs::remove_file(f);
+    }
+    Ok(files.len())
 }
 
 /// A path typed at a prompt, with ~/ as the home folder.
@@ -821,6 +862,29 @@ impl App {
         self.pick_setup(i);
     }
 
+    /// Delete the picked setup from the calculator's disk, keeping a copy
+    /// in ~/.dm41/deleted. The calculator itself cannot delete files.
+    fn delete_setup(&mut self) {
+        let Some(s) = self.setups.get(self.sel).cloned() else { return };
+        let Some((m, true)) = mount() else {
+            return self.note = "the calculator's disk must be mounted for writing: plug it in, R mounts it".into();
+        };
+        let n = setup_files(&m, &s.name, s.backup).len();
+        let prompt = format!(" Delete {} ({n} files) from the calculator? A copy goes to ~/.dm41/deleted. y/n: ", s.name);
+        if !self.foot.ask_or_cancel(&prompt, "").is_some_and(|a| a.trim().eq_ignore_ascii_case("y")) {
+            return;
+        }
+        let keep = home().join("deleted").join(format!("{}_{}", file_name(&s.name), stamp()));
+        self.note = match delete_setup_files(&m, &disk(), &keep, &s.name, s.backup) {
+            Ok(k) => format!("{} deleted from the calculator ({k} files); a copy is in {}", s.name, keep.display()),
+            Err(e) => e,
+        };
+        self.setups = modules::setups(&disk());
+        let i = self.sel.min(self.setups.len().saturating_sub(1));
+        self.sel = i;
+        self.pick_setup(i);
+    }
+
     fn working_copy(&self, p: &Program) -> PathBuf {
         home().join("prog").join(format!("{}.txt", file_name(&p.name())))
     }
@@ -915,7 +979,7 @@ impl App {
             Tab::Programs => "e edit  r run in rpnx  s save .raw  l load a file  R read again  q quit",
             Tab::Xm => "e edit a text file  l load a text file  ↑↓ pick  q quit",
             Tab::Modules => "Space plug in or out of the setup  ↑↓ pick  PgUp/PgDn scroll  q quit",
-            Tab::Setups => "n new setup from this one  s copy it to the calculator  ↑↓ pick  q quit",
+            Tab::Setups => "n new setup from this one  s copy it to the calculator  D delete it  ↑↓ pick  q quit",
             _ => "←→ tab  ↑↓ pick  PgUp/PgDn scroll  B back up the disk  R read again  q quit",
         };
         let keys = match self.tab {
@@ -1241,6 +1305,7 @@ impl App {
                 " " if self.tab == Tab::Modules => self.toggle(),
                 " " if matches!(self.tab, Tab::Programs | Tab::Xm | Tab::Flags) => self.pick(),
                 "n" if self.tab == Tab::Setups => self.new_setup(),
+                "D" if self.tab == Tab::Setups => self.delete_setup(),
                 "s" if self.tab == Tab::Setups => {
                     if let Some(s) = self.setups.get(self.sel) {
                         self.note = match (s.backup, set_memory(s)) {
@@ -1355,6 +1420,31 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delete_moves_only_that_setup_and_keeps_a_copy() {
+        let root = std::env::temp_dir().join(format!("dm41-delete-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (m, disk, keep) = (root.join("calc"), root.join("disk"), root.join("keep"));
+        for top in [&m, &disk] {
+            for f in ["BACKUP/old.b41", "BACKUP/old.d41", "BACKUP/OLD.ram", "BACKUP/oldx.d41", "BACKUP/mine.d41", "MODS/old.m41", "MODS/mine.m41"] {
+                std::fs::create_dir_all(top.join(f).parent().unwrap()).unwrap();
+                std::fs::write(top.join(f), f).unwrap();
+            }
+        }
+        // a full backup: its BACKUP files go, MODS/old.m41 and oldx stay
+        assert_eq!(delete_setup_files(&m, &disk, &keep, "old", true), Ok(3));
+        for top in [&m, &disk] {
+            assert!(!top.join("BACKUP/old.b41").exists() && !top.join("BACKUP/OLD.ram").exists());
+            assert!(top.join("BACKUP/oldx.d41").exists() && top.join("MODS/old.m41").exists());
+        }
+        assert_eq!(std::fs::read_to_string(keep.join("BACKUP/old.d41")).unwrap(), "BACKUP/old.d41");
+        // a setup of dm41's own: MODS/NAME.m41 goes too
+        assert_eq!(delete_setup_files(&m, &disk, &root.join("keep2"), "mine", false), Ok(2));
+        assert!(!m.join("MODS/mine.m41").exists() && !disk.join("BACKUP/mine.d41").exists());
+        assert!(delete_setup_files(&m, &disk, &keep, "gone", true).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn steps_take_the_colours_of_hp41_vim() {

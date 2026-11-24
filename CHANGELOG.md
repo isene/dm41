@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0 (2026-11-25)
+
+- `D` in Setups deletes the picked setup from the calculator's disk, after a
+  y/n question. Its files move to `~/.dm41/deleted/NAME_DATE`.
+
 ## 0.4.0 (2026-11-24)
 
 - `B` copies the calculator's whole disk to `~/.dm41/backups/DATE_TIME`.

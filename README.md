@@ -43,6 +43,7 @@ Part of the [Fe₂O₃](https://isene.org/fe2o3/) suite.
 | `s` | Save `NAME.raw`; in Setups, copy the setup to the calculator |
 | Space | In Modules, plug the module in or out of the setup; in Programs, X-Memory and Flags, put it in or out of the setup's memory |
 | `n` | In Setups, make a new setup with the same modules |
+| `D` | In Setups, delete the setup from the calculator; a copy goes to `~/.dm41/deleted` |
 | `R` | Read the state again |
 | `q` | Quit |
 
@@ -94,6 +95,14 @@ Make a full backup on the calculator first, so you can go
 back. dm41 never writes over the calculator's own backups.
 
 ![The Setups tab](img/screenshot-setups.png)
+
+## Deleting a setup
+
+The calculator cannot delete files itself. `D` in Setups deletes the
+picked setup from its disk: the files of a full backup in `BACKUP`, or a
+setup dm41 made with its `.m41` in `MODS`. dm41 asks first, and moves the
+files to `~/.dm41/deleted/NAME_DATE`, so you can copy them back. The disk
+must be mounted for writing.
 
 ## Backing up the calculator
 
