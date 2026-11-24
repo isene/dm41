@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 (2026-11-24)
+
+- Black panes.
+- The top bar keeps its grey after the picked tab.
+
 ## 0.2.0 (2026-11-24)
 
 - Modules tab: every .MOD file on the calculator's disk, with its XROM

@@ -36,7 +36,7 @@ Modules and setups (.m41 module lists) are copied from the disk to
 calculator with Module menu, Load Modules, Load Flash and AM Lists.";
 
 const HEAD_BG: u16 = 236;
-const PANEL_BG: u16 = 234;
+const PANEL_BG: u16 = 16;
 const SEL_BG: u8 = 238;
 const GOLD: u8 = 178; // the shift key's colour on the HP-41
 const DIM: u8 = 244;
@@ -471,7 +471,12 @@ impl App {
         let mut parts = vec![style::fg(&style::bold(" dm41"), GOLD)];
         for (t, name) in TABS {
             let label = format!(" {name} ");
-            parts.push(if t == self.tab { style::fb(&style::bold(&label), 16, GOLD) } else { style::fg(&label, 250) });
+            // fb ends by resetting the background, so the bar's own comes back after it
+            parts.push(if t == self.tab {
+                style::fb(&style::bold(&label), 16, GOLD) + &style::set_bg(HEAD_BG as u8)
+            } else {
+                style::fg(&label, 250)
+            });
         }
         let file = match (self.tab, self.setups.get(self.setup)) {
             (Tab::Modules | Tab::Setups, Some(s)) => format!("setup {}", s.name),
