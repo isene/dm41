@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 (2026-11-24)
+
+- Modules tab: every .MOD file on the calculator's disk, with its XROM
+  numbers and function names.
+- Setups tab: the module lists (.m41) on the disk. `n` makes a new setup,
+  Space in Modules plugs a module in or out, `s` copies it to the calculator.
+- Listings name the functions of the setup's modules, read from their files.
+- A copy of the disk's modules and setups is kept in ~/.dm41/disk.
+- X<I>Y, the DM41X's extra X-Function, is known by name.
+
 ## 0.1.0 (2026-11-24)
 
 - Reads a DM41X state file (.d41) from the calculator's disk, or the last copy.

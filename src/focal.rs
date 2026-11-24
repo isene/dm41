@@ -91,14 +91,15 @@ const POST: [&str; 26] = [
 ];
 
 /// The X-Functions of the 41CX (module 25). The numbers are checked against
-/// the XROM lines in the HP-41 ROM sources.
-const XF: [&str; 63] = [
+/// the XROM lines in the HP-41 ROM sources and the DM41X's own module file,
+/// which adds X<I>Y at the end.
+const XF: [&str; 64] = [
     "-EXT FCN", "ALENG", "ANUM", "APPCHR", "APPREC", "ARCLREC", "AROT", "ATOX", "CLFL", "CLKEYS", "CRFLAS", "CRFLD",
     "DELCHR", "DELREC", "EMDIR", "FLSIZE", "GETAS", "GETKEY", "GETP", "GETR", "GETREC", "GETRX", "GETSUB", "GETX",
     "INSCHR", "INSREC", "PASN", "PCLPS", "POSA", "POSFL", "PSIZE", "PURFL", "RCLFLAG", "RCLPT", "RCLPTA", "REGMOVE",
     "REGSWAP", "SAVEAS", "SAVEP", "SAVER", "SAVERX", "SAVEX", "SEEKPT", "SEEKPTA", "SIZE?", "STOFLAG", "X<>F",
     "XTOA", "-CX EXT FCN", "ASROOM", "CLRGX", "ED", "EMDIRX", "EMROOM", "GETKEYX", "RESZFL", "ΣREG?", "X=NN?",
-    "X≠NN?", "X<NN?", "X<=NN?", "X>NN?", "X>=NN?",
+    "X≠NN?", "X<NN?", "X<=NN?", "X>NN?", "X>=NN?", "X<I>Y",
 ];
 
 /// The Time functions of the 41CX (module 26), in the same order: the

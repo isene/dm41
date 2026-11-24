@@ -1,8 +1,10 @@
 mod focal;
+mod modules;
 mod state;
 
 use crust::{style, Crust, Input, Pane};
 use focal::Names;
+use modules::{Module, Setup};
 use state::{show, Program, State, XmFile};
 use std::path::{Path, PathBuf};
 
@@ -16,16 +18,22 @@ const HELP: &str = "dm41: the memory of a SwissMicros DM41X in the terminal
   dm41 --encode LISTING     a listing as a .raw file, on stdout
   -h, --help   -v, --version
 
-Keys: Left/Right tab, Up/Down pick, PgUp/PgDn scroll
-  e  edit the program in scribe; NAME.raw is saved when scribe ends
-  r  run the program in rpnx      s  save NAME.raw      R  read the state again
-  q  quit
+Keys: Left/Right tab, Up/Down pick, PgUp/PgDn scroll, R read again, q quit
+  Programs  e edit in scribe (NAME.raw is saved when scribe ends)
+            r run in rpnx    s save NAME.raw
+  Modules   Space plugs the module in or out of the setup
+  Setups    Up/Down picks the setup the listings use
+            n new setup from this one    s copy it to the calculator
 
 The calculator shows its disk in USB disk mode (File menu). dm41 reads the
 newest .d41 in its STATE folder and keeps a copy in ~/.dm41/last.d41.
 Listings and .raw files go to ~/.dm41/prog; a .raw also goes to the
 calculator's PROG folder when its disk is mounted for writing. Load it on
-the calculator with File menu, Load RAW Program.";
+the calculator with File menu, Load RAW Program.
+
+Modules and setups (.m41 module lists) are copied from the disk to
+~/.dm41/disk. A new setup goes to its MODS folder; load it on the
+calculator with Module menu, Load Modules, Load Flash and AM Lists.";
 
 const HEAD_BG: u16 = 236;
 const PANEL_BG: u16 = 234;
@@ -96,6 +104,33 @@ fn mount() -> Option<(PathBuf, bool)> {
     })
 }
 
+/// The copy of the calculator's modules and setups.
+fn disk() -> PathBuf {
+    home().join("disk")
+}
+
+fn modified(p: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(p).and_then(|x| x.modified()).ok()
+}
+
+/// Copy the calculator's modules and setups to ~/.dm41/disk when they are
+/// new or changed there, so they can be read with the calculator unplugged.
+fn mirror(m: &Path) {
+    for dir in ["MODS", "BACKUP"] {
+        let Ok(rd) = std::fs::read_dir(m.join(dir)) else {
+            continue;
+        };
+        let to = disk().join(dir);
+        let _ = std::fs::create_dir_all(&to);
+        for e in rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())) {
+            let dest = to.join(e.file_name());
+            if modified(&e.path()) > modified(&dest) {
+                let _ = std::fs::copy(e.path(), &dest);
+            }
+        }
+    }
+}
+
 fn newest_d41(dir: &Path) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
@@ -119,7 +154,9 @@ fn load(arg: Option<&str>) -> Result<(PathBuf, State), String> {
     let last = home().join("last.d41");
     if let Some(p) = mount().and_then(|(m, _)| newest_d41(&m.join("STATE"))) {
         let s = read(&p)?;
-        let _ = std::fs::create_dir_all(home()).and_then(|_| std::fs::copy(&p, &last));
+        if modified(&p) > modified(&last) {
+            let _ = std::fs::create_dir_all(home()).and_then(|_| std::fs::copy(&p, &last));
+        }
         return Ok((p, s));
     }
     if last.exists() {
@@ -158,9 +195,36 @@ fn save_raw(name: &str, listing: &str, names: &Names) -> String {
                 Err(e) => format!("{file} saved in ~/.dm41/prog; the calculator's disk said: {e}"),
             }
         }
-        Some((_, false)) => format!("{file}: {} bytes in ~/.dm41/prog (the calculator's disk is read-only)", bytes.len()),
+        Some((_, false)) => {
+            format!("{file}: {} bytes in ~/.dm41/prog (the calculator's disk is read-only)", bytes.len())
+        }
         None => format!("{file}: {} bytes in ~/.dm41/prog (mount the calculator's disk to copy it there)", bytes.len()),
     }
+}
+
+/// Write a setup to ~/.dm41/disk, and to the calculator's disk when it can
+/// be written. Says what it did.
+fn put_setup(s: &Setup) -> String {
+    let file = format!("{}.m41", s.name);
+    if let Err(e) = std::fs::create_dir_all(disk().join("MODS")).and_then(|_| std::fs::write(&s.path, s.text())) {
+        return format!("{file}: {e}");
+    }
+    match mount() {
+        Some((m, true)) => match std::fs::write(m.join("MODS").join(&file), s.text()) {
+            Ok(_) => format!("{file} is on the calculator's disk in MODS"),
+            Err(e) => format!("{file} saved in ~/.dm41/disk; the calculator's disk said: {e}"),
+        },
+        Some((_, false)) => {
+            format!("{file} saved in ~/.dm41/disk (the calculator's disk is read-only)")
+        }
+        None => format!("{file} saved in ~/.dm41/disk (mount the calculator's disk, then s copies it there)"),
+    }
+}
+
+/// The setup of the newest full backup, which is what the calculator last
+/// had plugged in as far as its disk tells.
+fn newest_setup(setups: &[Setup]) -> usize {
+    setups.iter().enumerate().filter(|(_, s)| s.backup).max_by_key(|(_, s)| modified(&s.path)).map_or(0, |(i, _)| i)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -169,10 +233,18 @@ enum Tab {
     Registers,
     Flags,
     Xm,
+    Modules,
+    Setups,
 }
 
-const TABS: [(Tab, &str); 4] =
-    [(Tab::Programs, "Programs"), (Tab::Registers, "Registers"), (Tab::Flags, "Flags"), (Tab::Xm, "X-Memory")];
+const TABS: [(Tab, &str); 6] = [
+    (Tab::Programs, "Programs"),
+    (Tab::Registers, "Registers"),
+    (Tab::Flags, "Flags"),
+    (Tab::Xm, "X-Memory"),
+    (Tab::Modules, "Modules"),
+    (Tab::Setups, "Setups"),
+];
 
 struct App {
     path: PathBuf,
@@ -180,6 +252,9 @@ struct App {
     names: Names,
     progs: Vec<Program>,
     xm: Vec<XmFile>,
+    mods: Vec<Module>,
+    setups: Vec<Setup>,
+    setup: usize,
     tab: Tab,
     sel: usize,
     note: String,
@@ -212,8 +287,9 @@ fn colour_step(text: &str) -> String {
 }
 
 impl App {
-    fn new(path: PathBuf, st: State) -> App {
-        let names = focal::builtin_names();
+    fn new(path: PathBuf, st: State, mods: Vec<Module>, setups: Vec<Setup>) -> App {
+        let setup = newest_setup(&setups);
+        let names = modules::names(&mods, setups.get(setup));
         let blank = || Pane::new(1, 1, 1, 1, 252, PANEL_BG);
         let mut app = App {
             progs: st.programs(&names),
@@ -221,6 +297,9 @@ impl App {
             path,
             st,
             names,
+            mods,
+            setups,
+            setup,
             tab: Tab::Programs,
             sel: 0,
             note: String::new(),
@@ -251,8 +330,16 @@ impl App {
     }
 
     fn reload(&mut self) {
+        if let Some((m, _)) = mount() {
+            mirror(&m);
+        }
         match load(None) {
             Ok((p, s)) => {
+                let name = self.setups.get(self.setup).map(|s| s.name.clone());
+                self.mods = modules::read_all(&disk().join("MODS"));
+                self.setups = modules::setups(&disk());
+                self.setup = self.setups.iter().position(|s| Some(&s.name) == name.as_ref()).unwrap_or(0);
+                self.names = modules::names(&self.mods, self.setups.get(self.setup));
                 self.progs = s.programs(&self.names);
                 self.xm = s.xm_files();
                 self.path = p;
@@ -268,8 +355,58 @@ impl App {
         match self.tab {
             Tab::Programs => self.progs.len(),
             Tab::Xm => self.xm.len(),
+            Tab::Modules => self.mods.len(),
+            Tab::Setups => self.setups.len(),
             _ => 0,
         }
+    }
+
+    /// Use another setup's modules for the names in listings.
+    fn pick_setup(&mut self, i: usize) {
+        self.setup = i;
+        self.names = modules::names(&self.mods, self.setups.get(i));
+        self.progs = self.st.programs(&self.names);
+    }
+
+    /// Plug the picked module in or out of the setup, and save it.
+    fn toggle(&mut self) {
+        let Some(m) = self.mods.get(self.sel) else {
+            return;
+        };
+        let Some(s) = self.setups.get_mut(self.setup) else {
+            self.note = "no setup yet: the calculator's disk has none".into();
+            return;
+        };
+        if s.backup {
+            self.note = format!("{} belongs to a full backup; make a copy with n in Setups", s.name);
+            return;
+        }
+        s.toggle(&m.file);
+        self.note = put_setup(s);
+        self.pick_setup(self.setup);
+    }
+
+    /// A new setup with the same modules as the picked one.
+    fn new_setup(&mut self) {
+        let Some(from) = self.setups.get(self.setup) else {
+            return;
+        };
+        let prompt = format!(" New setup with the modules of {}, named: ", from.name);
+        let Some(name) = self.foot.ask_or_cancel(&prompt, "") else {
+            return;
+        };
+        let name = file_name(name.trim());
+        let path = disk().join("MODS").join(format!("{name}.m41"));
+        if self.setups.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
+            self.note = format!("there is a setup {name} already");
+            return;
+        }
+        let s = Setup { name: name.clone(), path, lines: from.lines.clone(), backup: false };
+        self.note = put_setup(&s);
+        self.setups = modules::setups(&disk());
+        let i = self.setups.iter().position(|s| s.name == name).unwrap_or(0);
+        self.sel = i;
+        self.pick_setup(i);
     }
 
     fn working_copy(&self, p: &Program) -> PathBuf {
@@ -306,7 +443,9 @@ impl App {
     }
 
     fn edit(&mut self) {
-        let Some((name, file)) = self.listing_file() else { return };
+        let Some((name, file)) = self.listing_file() else {
+            return;
+        };
         if self.run_child("scribe", &file) {
             let text = std::fs::read_to_string(&file).unwrap_or_default();
             self.note = save_raw(&name, &text, &self.names);
@@ -320,7 +459,9 @@ impl App {
     }
 
     fn save(&mut self) {
-        let Some(p) = self.progs.get(self.sel) else { return };
+        let Some(p) = self.progs.get(self.sel) else {
+            return;
+        };
         let file = self.working_copy(p);
         let text = std::fs::read_to_string(&file).unwrap_or_else(|_| focal::listing(&p.steps));
         self.note = save_raw(&p.name(), &text, &self.names);
@@ -332,7 +473,10 @@ impl App {
             let label = format!(" {name} ");
             parts.push(if t == self.tab { style::fb(&style::bold(&label), 16, GOLD) } else { style::fg(&label, 250) });
         }
-        let file = self.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        let file = match (self.tab, self.setups.get(self.setup)) {
+            (Tab::Modules | Tab::Setups, Some(s)) => format!("setup {}", s.name),
+            _ => self.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
+        };
         parts.push(style::fg(&format!("  {file}"), DIM));
         let w = self.top.w as usize;
         self.top.set_text(&crust::with_version(&parts.join(" "), w, "dm41", env!("CARGO_PKG_VERSION")));
@@ -342,6 +486,8 @@ impl App {
     fn render_foot(&mut self) {
         let keys = match self.tab {
             Tab::Programs => "e edit  r run in rpnx  s save .raw  R read again  q quit",
+            Tab::Modules => "Space plug in or out of the setup  ↑↓ pick  PgUp/PgDn scroll  q quit",
+            Tab::Setups => "n new setup from this one  s copy it to the calculator  ↑↓ pick  q quit",
             _ => "←→ tab  ↑↓ pick  PgUp/PgDn scroll  R read again  q quit",
         };
         let text = if self.note.is_empty() { style::fg(keys, DIM) } else { style::fg(&self.note, GOLD) };
@@ -349,18 +495,19 @@ impl App {
         self.foot.refresh();
     }
 
-    fn list(&self, items: Vec<String>) -> String {
+    /// The left side's list, each line in its own colour.
+    fn list(&self, items: Vec<(String, u8)>) -> String {
         let w = self.left.w as usize;
         items
             .iter()
             .enumerate()
-            .map(|(i, s)| {
+            .map(|(i, (s, c))| {
                 let s: String = format!(" {s}").chars().take(w).collect();
                 let pad = format!("{s:w$}");
                 if i == self.sel {
                     style::fb(&style::bold(&pad), 255, SEL_BG)
                 } else {
-                    pad
+                    style::fg(&pad, *c)
                 }
             })
             .collect::<Vec<_>>()
@@ -370,7 +517,7 @@ impl App {
     fn render_body(&mut self) {
         let (left, right) = match self.tab {
             Tab::Programs => {
-                let items = self.progs.iter().map(|p| p.name()).collect();
+                let items = self.progs.iter().map(|p| (p.name(), 252)).collect();
                 let right = match self.progs.get(self.sel) {
                     Some(p) => {
                         let mut head = format!("{}  {} lines", style::bold(&p.name()), p.steps.len());
@@ -385,7 +532,9 @@ impl App {
                             .steps
                             .iter()
                             .enumerate()
-                            .map(|(n, s)| format!("{} {}", style::fg(&format!("{:0w$}", n + 1), DIM), colour_step(&s.text)))
+                            .map(|(n, s)| {
+                                format!("{} {}", style::fg(&format!("{:0w$}", n + 1), DIM), colour_step(&s.text))
+                            })
                             .collect();
                         format!("{head}\n\n{}", lines.join("\n"))
                     }
@@ -394,22 +543,29 @@ impl App {
                 (self.list(items), right)
             }
             Tab::Xm => {
-                let items = self.xm.iter().map(|f| format!("{:<8}{}", f.name, f.kind_name())).collect();
+                let items = self.xm.iter().map(|f| (format!("{:<8}{}", f.name, f.kind_name()), 252)).collect();
                 let right = match self.xm.get(self.sel) {
                     Some(f) => {
                         let lines = state::xm_lines(f, &self.names);
                         let lines: Vec<String> =
                             if f.kind == 1 { lines.iter().map(|l| colour_step(l)).collect() } else { lines };
-                        let head = format!("{}  {} file, {} registers", style::bold(&f.name), f.kind_name(), f.regs.len());
+                        let head =
+                            format!("{}  {} file, {} registers", style::bold(&f.name), f.kind_name(), f.regs.len());
                         format!("{head}\n\n{}", lines.join("\n"))
                     }
                     None => "No files in X-Memory.".into(),
                 };
                 (self.list(items), right)
             }
+            Tab::Modules => self.render_modules(),
+            Tab::Setups => self.render_setups(),
             Tab::Registers => {
-                let mut left: Vec<String> =
-                    self.st.stack().iter().map(|(c, v)| format!(" {}  {}", style::fg(&c.to_string(), GOLD), show(*v))).collect();
+                let mut left: Vec<String> = self
+                    .st
+                    .stack()
+                    .iter()
+                    .map(|(c, v)| format!(" {}  {}", style::fg(&c.to_string(), GOLD), show(*v)))
+                    .collect();
                 left.push(String::new());
                 left.push(format!(" {}", style::fg("ALPHA", GOLD)));
                 left.push(format!(" {}", self.st.alpha()));
@@ -428,7 +584,13 @@ impl App {
                     (false, true) => "ENG",
                     _ => "SCI",
                 };
-                let angle = if f(42) { "GRAD" } else if f(43) { "RAD" } else { "DEG" };
+                let angle = if f(42) {
+                    "GRAD"
+                } else if f(43) {
+                    "RAD"
+                } else {
+                    "DEG"
+                };
                 let left = [
                     format!(" {}  {mode} {digits}", style::fg("Display", GOLD)),
                     format!(" {}  {angle}", style::fg("Angles", GOLD)),
@@ -455,6 +617,107 @@ impl App {
         self.right.refresh();
     }
 
+    /// How a setup has a module: plugged in, only in flash, or not at all.
+    fn mark(&self, file: &str) -> (&'static str, u8) {
+        match self.setups.get(self.setup).and_then(|s| s.mark(file)) {
+            Some('A') => ("●", 114),
+            Some(_) => ("○", GOLD),
+            None => (" ", 250),
+        }
+    }
+
+    fn render_modules(&self) -> (String, String) {
+        let items = self
+            .mods
+            .iter()
+            .map(|m| {
+                let (mark, c) = self.mark(&m.file);
+                let ids: Vec<String> = m.xroms().iter().map(|x| x.to_string()).collect();
+                (format!("{mark} {:<12} {}", m.stem(), ids.join(" ")), c)
+            })
+            .collect();
+        let Some(m) = self.mods.get(self.sel) else {
+            return (self.list(items), "No modules: mount the calculator's disk once, and dm41 keeps a copy.".into());
+        };
+        let setup = self.setups.get(self.setup).map_or("", |s| s.name.as_str());
+        let (_, c) = self.mark(&m.file);
+        let how = match self.setups.get(self.setup).and_then(|s| s.mark(&m.file)) {
+            Some('A') => format!("plugged in by {setup}"),
+            Some(_) => format!("in flash with {setup}, not plugged in"),
+            None => format!("not in {setup}"),
+        };
+        let mut out = vec![
+            style::bold(if m.title.is_empty() { m.stem() } else { &m.title }),
+            style::fg(
+                &[m.file.as_str(), &m.version, &m.author]
+                    .iter()
+                    .filter(|x| !x.is_empty())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("  "),
+                DIM,
+            ),
+            style::fg(&how, c),
+        ];
+        for r in &m.roms {
+            out.push(String::new());
+            let bank = if r.bank > 1 { format!("  bank {}", r.bank) } else { String::new() };
+            if r.funcs.is_empty() {
+                out.push(style::fg(&format!("{}{bank}: no function table", r.name), DIM));
+                continue;
+            }
+            out.push(style::fg(&style::bold(&format!("XROM {}  {}{bank}", r.xrom, r.funcs[0])), GOLD));
+            for (f, n) in r.funcs.iter().enumerate().skip(1) {
+                let n = match n.as_str() {
+                    "" => style::fg("?", DIM),
+                    h if h.starts_with('-') => style::fg(h, GOLD),
+                    _ => n.clone(),
+                };
+                out.push(format!("{}  {n}", style::fg(&format!("{:02},{f:02}", r.xrom), DIM)));
+            }
+        }
+        (self.list(items), out.join("\n"))
+    }
+
+    fn render_setups(&self) -> (String, String) {
+        let items = self
+            .setups
+            .iter()
+            .map(|s| if s.backup { (format!("{:<12} backup", s.name), 250) } else { (s.name.clone(), 117) })
+            .collect();
+        let Some(s) = self.setups.get(self.sel) else {
+            return (self.list(items), "No setups: the calculator writes one with each full backup.".into());
+        };
+        let on = s.lines.iter().filter(|(k, _)| *k == 'A').count();
+        let mut out = vec![format!("{}  {on} modules plugged in", style::bold(&s.name))];
+        if s.backup {
+            out.push(style::fg(
+                "Part of a full backup: Settings menu, Restore from Backup loads it with its memory.",
+                DIM,
+            ));
+            out.push(style::fg("n makes a copy to change.", DIM));
+        } else {
+            out.push(style::fg("Load it with Module menu, Load Modules, Load Flash and AM Lists.", DIM));
+            let there = match mount() {
+                Some((m, _)) if m.join("MODS").join(format!("{}.m41", s.name)).exists() => "on the calculator's disk",
+                Some(_) => "not on the calculator's disk yet: s copies it there",
+                None => "the calculator's disk is not mounted",
+            };
+            out.push(style::fg(there, DIM));
+        }
+        out.push(String::new());
+        for (k, entry) in &s.lines {
+            let file = entry.rsplit('/').next().unwrap_or(entry);
+            let m = self.mods.iter().find(|m| m.file.eq_ignore_ascii_case(file));
+            let (mark, c) = if *k == 'A' { ("●", 114) } else { ("○", GOLD) };
+            let stem = m.map_or(file, |m| m.stem());
+            let ids: Vec<String> = m.map(|m| m.xroms().iter().map(|x| x.to_string()).collect()).unwrap_or_default();
+            let title = m.map_or("", |m| m.title.as_str());
+            out.push(format!("{} {:<12} {:<6} {}", style::fg(mark, c), stem, ids.join(" "), style::fg(title, DIM)));
+        }
+        (self.list(items), out.join("\n"))
+    }
+
     fn render(&mut self) {
         self.render_top();
         self.render_body();
@@ -463,23 +726,26 @@ impl App {
 
     fn switch(&mut self, step: isize) {
         let i = TABS.iter().position(|(t, _)| *t == self.tab).unwrap_or(0) as isize;
-        self.tab = TABS[(i + step).rem_euclid(TABS.len() as isize) as usize].0;
-        self.sel = 0;
+        self.go(TABS[(i + step).rem_euclid(TABS.len() as isize) as usize].0);
+    }
+
+    fn go(&mut self, tab: Tab) {
+        self.tab = tab;
+        self.sel = if tab == Tab::Setups { self.setup } else { 0 };
     }
 
     fn run(&mut self) {
         self.render();
         loop {
-            let Some(key) = Input::getchr(None) else { continue };
+            let Some(key) = Input::getchr(None) else {
+                continue;
+            };
             let note = std::mem::take(&mut self.note);
             match key.as_str() {
                 "q" | "ESC" => break,
                 "LEFT" | "S-TAB" => self.switch(-1),
                 "RIGHT" | "TAB" => self.switch(1),
-                "1" | "2" | "3" | "4" => {
-                    self.tab = TABS[key.parse::<usize>().unwrap_or(1) - 1].0;
-                    self.sel = 0;
-                }
+                "1" | "2" | "3" | "4" | "5" | "6" => self.go(TABS[key.parse::<usize>().unwrap_or(1) - 1].0),
                 "UP" if self.count() > 0 => self.sel = self.sel.saturating_sub(1),
                 "DOWN" if self.count() > 0 => self.sel = (self.sel + 1).min(self.count() - 1),
                 "UP" => self.right.lineup(),
@@ -491,10 +757,20 @@ impl App {
                 "e" if self.tab == Tab::Programs => self.edit(),
                 "r" if self.tab == Tab::Programs => self.run_rpnx(),
                 "s" if self.tab == Tab::Programs => self.save(),
+                " " if self.tab == Tab::Modules => self.toggle(),
+                "n" if self.tab == Tab::Setups => self.new_setup(),
+                "s" if self.tab == Tab::Setups => {
+                    if let Some(s) = self.setups.get(self.sel) {
+                        self.note = if s.backup { format!("{} is on the disk already", s.name) } else { put_setup(s) };
+                    }
+                }
                 "R" => self.reload(),
                 "RESIZE" => self.layout(),
                 _ if note.is_empty() => continue,
                 _ => {}
+            }
+            if self.tab == Tab::Setups && self.sel != self.setup {
+                self.pick_setup(self.sel);
             }
             self.render();
         }
@@ -512,7 +788,12 @@ fn main() {
         println!("dm41 {}", env!("CARGO_PKG_VERSION"));
         return;
     }
-    let names = focal::builtin_names();
+    if let Some((m, _)) = mount() {
+        mirror(&m);
+    }
+    let mods = modules::read_all(&disk().join("MODS"));
+    let setups = modules::setups(&disk());
+    let names = modules::names(&mods, setups.get(newest_setup(&setups)));
     let fail = |e: String| -> ! {
         eprintln!("dm41: {e}");
         std::process::exit(1)
@@ -553,7 +834,7 @@ fn main() {
     }
     Crust::init();
     Crust::set_app_identity("dm41");
-    App::new(path, st).run();
+    App::new(path, st, mods, setups).run();
     Crust::cleanup();
     Crust::clear_screen();
 }
@@ -563,12 +844,15 @@ mod tests {
     use super::*;
 
     /// Every program in the last state read on this machine encodes to a
-    /// .raw file that decodes to the same lines. Without a state, nothing
-    /// to check.
+    /// .raw file that decodes to the same lines, with the names of the
+    /// modules it uses. Without a state, nothing to check.
     #[test]
     fn programs_on_the_calculator_encode_back() {
-        let Ok(text) = std::fs::read_to_string(home().join("last.d41")) else { return };
-        let names = focal::builtin_names();
+        let Ok(text) = std::fs::read_to_string(home().join("last.d41")) else {
+            return;
+        };
+        let setups = modules::setups(&disk());
+        let names = modules::names(&modules::read_all(&disk().join("MODS")), setups.get(newest_setup(&setups)));
         for p in State::parse(&text).unwrap().programs(&names) {
             let bytes = focal::encode(&focal::listing(&p.steps), &names).unwrap();
             let back: Vec<String> = focal::decode(&bytes, &names).into_iter().map(|s| s.text).collect();
