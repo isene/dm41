@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 (2026-11-24)
+
+- dm41 mounts the calculator's disk when it is plugged in and unmounts it on
+  quit, through a sudoers line (see the README).
+- `--mount` and `--unmount` on the command line.
+
 ## 0.2.1 (2026-11-24)
 
 - Black panes.

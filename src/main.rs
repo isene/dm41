@@ -16,6 +16,8 @@ const HELP: &str = "dm41: the memory of a SwissMicros DM41X in the terminal
   dm41 --raw NAME [FILE]    one program as a .raw file, on stdout
   dm41 --xm NAME [FILE]     what an X-Memory file holds
   dm41 --encode LISTING     a listing as a .raw file, on stdout
+  dm41 --mount              mount the calculator's disk for writing
+  dm41 --unmount            unmount it, so the calculator can be unplugged
   -h, --help   -v, --version
 
 Keys: Left/Right tab, Up/Down pick, PgUp/PgDn scroll, R read again, q quit
@@ -25,8 +27,10 @@ Keys: Left/Right tab, Up/Down pick, PgUp/PgDn scroll, R read again, q quit
   Setups    Up/Down picks the setup the listings use
             n new setup from this one    s copy it to the calculator
 
-The calculator shows its disk in USB disk mode (File menu). dm41 reads the
-newest .d41 in its STATE folder and keeps a copy in ~/.dm41/last.d41.
+The calculator shows its disk in USB disk mode (File menu). dm41 mounts it
+at /mnt/dm41x when a sudoers line allows (see the README), and unmounts it
+on quit. It reads the newest .d41 in its STATE folder and keeps a copy in
+~/.dm41/last.d41.
 Listings and .raw files go to ~/.dm41/prog; a .raw also goes to the
 calculator's PROG folder when its disk is mounted for writing. Load it on
 the calculator with File menu, Load RAW Program.
@@ -91,6 +95,37 @@ fn flag_name(n: u32) -> &'static str {
 
 fn home() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".dm41")
+}
+
+const DEV: &str = "/dev/disk/by-label/DM41X";
+const POINT: &str = "/mnt/dm41x";
+
+/// Run a command through `sudo -n`, quietly; true when it worked.
+fn sudo(args: &[&str]) -> bool {
+    use std::process::{Command, Stdio};
+    let mut run = Command::new("sudo");
+    run.arg("-n").args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    run.status().is_ok_and(|s| s.success())
+}
+
+/// Mount the calculator's disk for writing when it is plugged in and not
+/// mounted yet. True when this did the mount.
+fn attach() -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if mount().is_some() || !Path::new(DEV).exists() {
+        return false;
+    }
+    let Ok(me) = std::fs::metadata("/proc/self") else { return false };
+    sudo(&["/usr/bin/mount", "-o", &format!("rw,uid={},gid={}", me.uid(), me.gid()), DEV, POINT])
+}
+
+/// Unmount the calculator's disk, wherever it is mounted.
+fn detach() -> Result<(), String> {
+    let Some((m, _)) = mount() else { return Ok(()) };
+    match sudo(&["/usr/bin/umount", &m.to_string_lossy()]) {
+        true => Ok(()),
+        false => Err(format!("could not unmount {}", m.display())),
+    }
 }
 
 /// Where the calculator's disk is mounted, and whether it can be written.
@@ -255,6 +290,8 @@ struct App {
     mods: Vec<Module>,
     setups: Vec<Setup>,
     setup: usize,
+    /// dm41 mounted the calculator's disk, so it unmounts it on quit.
+    attached: bool,
     tab: Tab,
     sel: usize,
     note: String,
@@ -287,7 +324,7 @@ fn colour_step(text: &str) -> String {
 }
 
 impl App {
-    fn new(path: PathBuf, st: State, mods: Vec<Module>, setups: Vec<Setup>) -> App {
+    fn new(path: PathBuf, st: State, mods: Vec<Module>, setups: Vec<Setup>, attached: bool) -> App {
         let setup = newest_setup(&setups);
         let names = modules::names(&mods, setups.get(setup));
         let blank = || Pane::new(1, 1, 1, 1, 252, PANEL_BG);
@@ -300,6 +337,7 @@ impl App {
             mods,
             setups,
             setup,
+            attached,
             tab: Tab::Programs,
             sel: 0,
             note: String::new(),
@@ -330,6 +368,7 @@ impl App {
     }
 
     fn reload(&mut self) {
+        self.attached |= attach();
         if let Some((m, _)) = mount() {
             mirror(&m);
         }
@@ -793,16 +832,33 @@ fn main() {
         println!("dm41 {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    let fail = |e: String| -> ! {
+        eprintln!("dm41: {e}");
+        std::process::exit(1)
+    };
+    if flag("--unmount").is_some() {
+        match detach() {
+            Ok(_) => println!("unmounted: the calculator can be unplugged"),
+            Err(e) => fail(e),
+        }
+        return;
+    }
+    if flag("--mount").is_some() {
+        attach();
+        match mount() {
+            Some((m, rw)) => println!("{} {}", m.display(), if rw { "for writing" } else { "read-only" }),
+            None => fail("not mounted: is the calculator in USB disk mode, and the sudoers line in place?".into()),
+        }
+        return;
+    }
+    let tui = !args.iter().any(|a| a.starts_with("--"));
+    let attached = tui && attach();
     if let Some((m, _)) = mount() {
         mirror(&m);
     }
     let mods = modules::read_all(&disk().join("MODS"));
     let setups = modules::setups(&disk());
     let names = modules::names(&mods, setups.get(newest_setup(&setups)));
-    let fail = |e: String| -> ! {
-        eprintln!("dm41: {e}");
-        std::process::exit(1)
-    };
     if let Some(i) = flag("--encode") {
         let file = args.get(i + 1).unwrap_or_else(|| fail("--encode needs a listing file".into()));
         let text = std::fs::read_to_string(file).unwrap_or_else(|e| fail(format!("{file}: {e}")));
@@ -839,9 +895,16 @@ fn main() {
     }
     Crust::init();
     Crust::set_app_identity("dm41");
-    App::new(path, st, mods, setups).run();
+    let mut app = App::new(path, st, mods, setups, attached);
+    app.run();
     Crust::cleanup();
     Crust::clear_screen();
+    if app.attached {
+        match detach() {
+            Ok(_) => println!("dm41: unmounted, the calculator can be unplugged"),
+            Err(e) => eprintln!("dm41: {e}"),
+        }
+    }
 }
 
 #[cfg(test)]

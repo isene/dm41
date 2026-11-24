@@ -19,9 +19,11 @@ Part of the [Fe₂O₃](https://isene.org/fe2o3/) suite.
 
 1. On the calculator, save the state (File menu, Save DM41 State File), then
    turn on USB disk mode (File menu, Activate USB Disk).
-2. Mount the disk on the computer. To copy `.raw` files back, mount it for
-   writing, for example with `udisksctl mount -b /dev/disk/by-label/DM41X`.
-3. Run `dm41`. It reads the newest `.d41` in the disk's `STATE` folder and
+2. Run `dm41`. It mounts the disk at `/mnt/dm41x` and unmounts it when you
+   quit, when a sudoers line lets it (below). Without that line, mount the
+   disk yourself, for writing to copy files back, for example with
+   `udisksctl mount -b /dev/disk/by-label/DM41X`.
+3. dm41 reads the newest `.d41` in the disk's `STATE` folder and
    keeps a copy in `~/.dm41/last.d41`, so it also works with the calculator
    unplugged.
 
@@ -65,6 +67,18 @@ dm41 --list [FILE.d41]        every program as a listing
 dm41 --raw NAME [FILE.d41]    one program as a .raw file, on stdout
 dm41 --xm NAME [FILE.d41]     what an X-Memory file holds
 dm41 --encode LISTING         a listing as a .raw file, on stdout
+dm41 --mount                  mount the calculator's disk for writing
+dm41 --unmount                unmount it, so the calculator can be unplugged
+```
+
+## Mounting without a password
+
+dm41 runs `sudo -n` to mount and unmount the disk. This line in
+`/etc/sudoers.d/dm41` lets it, with your user name, uid and gid in place of
+`you` and `1000` (`id` shows them). Make the folder `/mnt/dm41x` first.
+
+```
+you ALL=(root) NOPASSWD: /usr/bin/mount -o rw\,uid\=1000\,gid\=1000 /dev/disk/by-label/DM41X /mnt/dm41x, /usr/bin/umount /mnt/dm41x
 ```
 
 A listing has one step per line, with or without step numbers, using the
