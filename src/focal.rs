@@ -181,6 +181,22 @@ fn quoted(bytes: &[u8]) -> String {
     format!("\"{}\"", hp_text(bytes))
 }
 
+/// The function in a slot of a key assignment register: 04 and a function
+/// of one byte, an XROM function, or a synthetic line of two bytes.
+pub fn key_function(f1: u8, f2: u8, names: &Names) -> String {
+    let i = |b: u8, from: u8| (b - from) as usize;
+    if f1 == 0x04 {
+        return match f2 {
+            0x40..=0x8F => ONE[i(f2, 0x40)].to_string(),
+            0x90..=0x9F => ROW9[i(f2, 0x90)].to_string(),
+            0xA8..=0xAD => FLAGS[i(f2, 0xA8)].to_string(),
+            0xCE => "X<>".into(),
+            _ => format!("04 {f2:02X}"),
+        };
+    }
+    decode(&[f1, f2], names).first().map_or_else(|| format!("{f1:02X} {f2:02X}"), |s| s.text.clone())
+}
+
 /// The program lines in `code`. Null bytes are skipped; they only part two
 /// numbers that follow each other.
 pub fn decode(code: &[u8], names: &Names) -> Vec<Step> {

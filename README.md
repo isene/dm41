@@ -4,7 +4,7 @@
 
 **Your DM41X calculator in the terminal: programs, memory and modules. Written in Rust.**
 
-![Version](https://img.shields.io/badge/version-0.2.3-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
+![Version](https://img.shields.io/badge/version-0.7.0-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
 
 A twin of the [SwissMicros DM41X](https://www.swissmicros.com) calculator in
 the terminal. It shows the programs, registers, flags and X-Memory files from
@@ -33,7 +33,7 @@ Part of the [Fe₂O₃](https://isene.org/fe2o3/) suite.
 
 | Key | Does |
 |---|---|
-| Left / Right | Change tab: Programs, Registers, Flags, X-Memory, Modules, Setups |
+| Left / Right | Change tab: Programs, Registers, Flags, X-Memory, Modules, Setups, Keys |
 | Up / Down | Pick a program, a file, a module or a setup |
 | PgUp / PgDn | Scroll the right side |
 | `e` | Edit the program in scribe; `NAME.raw` is saved when scribe ends. In X-Memory, edit a text file |
@@ -104,6 +104,16 @@ setup dm41 made with its `.m41` in `MODS`. dm41 asks first, and moves the
 files to `~/.dm41/deleted/NAME_DATE`, so you can copy them back. The disk
 must be mounted for writing.
 
+## The keys in USER mode
+
+The Keys tab draws the DM41X keyboard with what USER mode puts on it: the
+functions given a key with ASN, shifted ones in gold above the key, and the
+programs whose label has a key, in green. Under it are the CST menus from
+the calculator's `KEYS` folder. Up and Down pick a key from the list and
+show it on the keyboard.
+
+![The Keys tab](img/screenshot-keys.png)
+
 ## Backing up the calculator
 
 `B` copies every file on the calculator's disk to
@@ -127,9 +137,11 @@ photo ~/Pictures/me.jpg    a PNG or JPEG photo, cut to fill the screen
 dm41 makes them when it starts, and on `R`, with the calculator's disk
 mounted for writing. They are `dm41-moon.bmp`, `dm41-agenda.bmp` and
 `dm41-photo.bmp`. A picture is written only when it changed, and other
-pictures in the folder stay. A photo with strong light and shade works
-best, since the screen has only black and white. `dm41 --off DIR` puts
-the pictures in a folder instead, to look at first.
+pictures in the folder stay.
+
+A photo with strong light and shade works best, since the screen has only
+black and white. `dm41 --off DIR` puts the pictures in a folder instead,
+to look at first.
 
 ![The Moon and the agenda, as the calculator shows them while it is off](img/off.png)
 

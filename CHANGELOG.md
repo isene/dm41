@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 (2026-11-25)
+
+- A Keys tab: the DM41X keyboard with the functions and programs USER mode
+  puts on it, read from the key assignment registers and the global labels,
+  and the CST menus from the `KEYS` folder.
+
 ## 0.6.0 (2026-11-25)
 
 - Pictures for the calculator to show while it is off: the Moon as it is

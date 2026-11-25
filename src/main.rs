@@ -1,4 +1,5 @@
 mod focal;
+mod keys;
 mod modules;
 mod off;
 mod state;
@@ -29,6 +30,8 @@ Keys: Left/Right tab, Up/Down pick, PgUp/PgDn scroll, R read again, q quit
             r run in rpnx    s save NAME.raw    l load a .raw or a listing
   X-Memory  e edit a text file in scribe    l load a text file
   Modules   Space plugs the module in or out of the setup
+  Keys      the functions and programs on keys in USER mode, and the
+            CST menus in the calculator's KEYS folder
   Setups    Up/Down picks the setup the listings use
             n new setup from this one    s copy it to the calculator
             D deletes it from the calculator; a copy goes to ~/.dm41/deleted
@@ -189,7 +192,7 @@ fn modified(p: &Path) -> Option<std::time::SystemTime> {
 /// Copy the calculator's modules and setups to ~/.dm41/disk when they are
 /// new or changed there, so they can be read with the calculator unplugged.
 fn mirror(m: &Path) {
-    for dir in ["MODS", "BACKUP"] {
+    for dir in ["MODS", "BACKUP", "KEYS"] {
         let Ok(rd) = std::fs::read_dir(m.join(dir)) else {
             continue;
         };
@@ -453,15 +456,17 @@ enum Tab {
     Xm,
     Modules,
     Setups,
+    Keys,
 }
 
-const TABS: [(Tab, &str); 6] = [
+const TABS: [(Tab, &str); 7] = [
     (Tab::Programs, "Programs"),
     (Tab::Registers, "Registers"),
     (Tab::Flags, "Flags"),
     (Tab::Xm, "X-Memory"),
     (Tab::Modules, "Modules"),
     (Tab::Setups, "Setups"),
+    (Tab::Keys, "Keys"),
 ];
 
 struct App {
@@ -479,6 +484,8 @@ struct App {
     /// memory, 1 in it, 2 only in it.
     pmarks: Vec<u8>,
     xmarks: Vec<u8>,
+    keys: Vec<keys::Assigned>,
+    cst: Vec<(String, Vec<(String, String)>)>,
     /// dm41 mounted the calculator's disk, so it unmounts it on quit.
     attached: bool,
     tab: Tab,
@@ -535,6 +542,8 @@ impl App {
             mem: None,
             pmarks: vec![],
             xmarks: vec![],
+            keys: vec![],
+            cst: vec![],
             attached,
             tab: Tab::Programs,
             sel: 0,
@@ -598,6 +607,7 @@ impl App {
             Tab::Modules => self.mods.len(),
             Tab::Setups => self.setups.len(),
             Tab::Flags => 56,
+            Tab::Keys => self.keys.len(),
             _ => 0,
         }
     }
@@ -647,6 +657,8 @@ impl App {
         progs.extend(end);
         self.progs = progs;
         self.xm = xm;
+        self.keys = keys::assigned(&self.st, &self.names);
+        self.cst = keys::cst(&disk().join("KEYS"));
         self.sel = self.sel.min(self.count().saturating_sub(1));
     }
 
@@ -1077,6 +1089,7 @@ impl App {
             }
             Tab::Modules => self.render_modules(),
             Tab::Setups => self.render_setups(),
+            Tab::Keys => self.render_keys(),
             Tab::Registers => {
                 let mut left: Vec<String> = self
                     .st
@@ -1222,6 +1235,53 @@ impl App {
         (self.list(items), out.join("\n"))
     }
 
+    fn render_keys(&self) -> (String, String) {
+        let items = self
+            .keys
+            .iter()
+            .map(|a| (format!("{:>4}  {}", a.code, a.name), if a.program { 114 } else if a.code < 0 { GOLD } else { 252 }))
+            .collect();
+        let programs = self.keys.iter().filter(|a| a.program).count();
+        let mut out = vec![
+            format!(
+                "{}  {} on keys",
+                style::bold("USER mode"),
+                [(self.keys.len() - programs, "function"), (programs, "program")]
+                    .map(|(n, w)| format!("{n} {w}{}", if n == 1 { "" } else { "s" }))
+                    .join(" and ")
+            ),
+            style::fg("Gold above a key is shifted; green is a program.", DIM),
+            String::new(),
+        ];
+        let picked = self.keys.get(self.sel).map(|a| a.code);
+        out.extend(keys::board(&self.keys, picked, self.right.w as usize));
+        for (file, keys) in &self.cst {
+            out.push(style::fg(&style::bold(&format!(" CST menu  KEYS/{file}")), GOLD));
+            let w = (self.right.w as usize).saturating_sub(2) / 4;
+            for four in keys.iter().filter(|(k, _)| k.len() == 1 && k.as_bytes()[0].is_ascii_uppercase()).collect::<Vec<_>>().chunks(4) {
+                let line: String = four
+                    .iter()
+                    .map(|(k, f)| {
+                        let f: String = if f.is_empty() { "·".into() } else { f.chars().take(w.saturating_sub(3)).collect() };
+                        format!("{} {f:<pad$}", style::fg(k, DIM), pad = w.saturating_sub(2))
+                    })
+                    .collect();
+                out.push(format!(" {line}"));
+            }
+            for (k, f) in keys.iter().filter(|(_, f)| !f.is_empty()) {
+                let shift = match k.as_str() {
+                    "1" => "SHIFT ▲",
+                    "2" => "SHIFT ▼",
+                    "3" => "SHIFT α",
+                    _ => continue,
+                };
+                out.push(format!(" {} {f}", style::fg(shift, DIM)));
+            }
+            out.push(String::new());
+        }
+        (self.list(items), out.join("\n"))
+    }
+
     fn render_setups(&self) -> (String, String) {
         let items = self
             .setups
@@ -1297,7 +1357,7 @@ impl App {
                 "q" | "ESC" => break,
                 "LEFT" | "S-TAB" => self.switch(-1),
                 "RIGHT" | "TAB" => self.switch(1),
-                "1" | "2" | "3" | "4" | "5" | "6" => self.go(TABS[key.parse::<usize>().unwrap_or(1) - 1].0),
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" => self.go(TABS[key.parse::<usize>().unwrap_or(1) - 1].0),
                 "UP" if self.count() > 0 => self.sel = self.sel.saturating_sub(1),
                 "DOWN" if self.count() > 0 => self.sel = (self.sel + 1).min(self.count() - 1),
                 "UP" => self.right.lineup(),

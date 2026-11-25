@@ -142,7 +142,7 @@ impl State {
         out + &self.cpu
     }
 
-    fn reg(&self, a: u64) -> u64 {
+    pub fn reg(&self, a: u64) -> u64 {
         self.regs.get(a as usize).copied().unwrap_or(0)
     }
 
