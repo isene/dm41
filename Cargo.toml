@@ -1,6 +1,6 @@
 [package]
 name = "dm41"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2021"
 authors = ["Geir Isene <g@isene.com>"]
 description = "A twin of the SwissMicros DM41X in the terminal: programs, registers, flags and X-Memory from its state file"

@@ -4,7 +4,7 @@
 
 **Your DM41X calculator in the terminal: programs, memory and modules. Written in Rust.**
 
-![Version](https://img.shields.io/badge/version-0.7.1-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
+![Version](https://img.shields.io/badge/version-0.8.0-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
 
 A twin of the [SwissMicros DM41X](https://www.swissmicros.com) calculator in
 the terminal. It shows the programs, registers, flags and X-Memory files from
@@ -33,11 +33,11 @@ Part of the [Fe₂O₃](https://isene.org/fe2o3/) suite.
 
 | Key | Does |
 |---|---|
-| Left / Right | Change tab: Programs, Registers, Flags, X-Memory, Modules, Setups, Keys |
+| Left / Right | Change tab: Programs, Registers, Flags, X-Memory, Modules, Setups, Keys, Library |
 | Up / Down | Pick a program, a file, a module or a setup |
 | PgUp / PgDn | Scroll the right side |
 | `e` | Edit the program in scribe; `NAME.raw` is saved when scribe ends. In X-Memory, edit a text file |
-| `l` | Load a program (a `.raw` or a listing), or in X-Memory a text file, into the setup |
+| `l` | Load a program (a `.raw` or a listing), or in X-Memory a text file, into the setup; in Library, the picked program |
 | `B` | Copy the calculator's whole disk to `~/.dm41/backups` |
 | `r` | Run the program in rpnx |
 | `s` | Save `NAME.raw`; in Setups, copy the setup to the calculator |
@@ -113,6 +113,21 @@ the calculator's `KEYS` folder. Up and Down pick a key from the list and
 show it on the keyboard.
 
 ![The Keys tab](img/screenshot-keys.png)
+
+## A library of programs
+
+Name the folders that hold your HP-41 programs in `~/.dm41/library`, one a
+line. The Library tab lists every `.41` listing and `.raw` file in them and
+in their subfolders, shows the one you pick, and `l` loads it into the
+setup. dm41 reads the folders when the tab first opens, and again on `R`.
+
+```
+~/HP-41/programs
+```
+
+A listing may have step numbers or not, notes before the first step, and a
+comma for the decimal point. A function from a module needs that module
+plugged into the setup, so that dm41 knows its number.
 
 ## Backing up the calculator
 

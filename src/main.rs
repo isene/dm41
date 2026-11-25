@@ -32,6 +32,8 @@ Keys: Left/Right tab, Up/Down pick, PgUp/PgDn scroll, R read again, q quit
   Modules   Space plugs the module in or out of the setup
   Keys      the functions and programs on keys in USER mode, and the
             CST menus in the calculator's KEYS folder
+  Library   the programs in the folders ~/.dm41/library names
+            l loads the picked one into the setup
   Setups    Up/Down picks the setup the listings use
             n new setup from this one    s copy it to the calculator
             D deletes it from the calculator; a copy goes to ~/.dm41/deleted
@@ -383,6 +385,52 @@ fn expand(p: &str) -> PathBuf {
     }
 }
 
+/// Program lines numbered and coloured, as the Programs tab shows them.
+fn numbered(steps: &[focal::Step]) -> Vec<String> {
+    let w = if steps.len() >= 100 { 3 } else { 2 };
+    steps
+        .iter()
+        .enumerate()
+        .map(|(n, s)| format!("{} {}", style::fg(&format!("{:0w$}", n + 1), DIM), colour_step(&s.text)))
+        .collect()
+}
+
+/// The bytes of a .raw file, or of a listing made into bytes.
+fn program_file(path: &Path, names: &Names) -> Result<Vec<u8>, String> {
+    let err = |e: String| format!("{}: {e}", path.display());
+    let b = std::fs::read(path).map_err(|e| err(e.to_string()))?;
+    if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("raw")) {
+        return Ok(b);
+    }
+    // a listing not in UTF-8 is taken as Latin-1, as old ones often are
+    let text = String::from_utf8(b).unwrap_or_else(|e| e.into_bytes().iter().map(|&c| c as char).collect());
+    focal::encode(&text, names).map_err(err)
+}
+
+/// The .41 listings and .raw files in the folders `cfg` names, one a line,
+/// and in their subfolders, sorted by name.
+fn library_files(cfg: &Path) -> Vec<PathBuf> {
+    let Ok(text) = std::fs::read_to_string(cfg) else { return vec![] };
+    let is_prog = |p: &Path| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("41") || x.eq_ignore_ascii_case("raw"));
+    let visible = |e: &std::fs::DirEntry| !e.file_name().to_string_lossy().starts_with('.');
+    let mut out = vec![];
+    for dir in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        let Ok(rd) = std::fs::read_dir(expand(dir)) else { continue };
+        for e in rd.flatten().filter(visible) {
+            let p = e.path();
+            if p.is_dir() {
+                let sub = std::fs::read_dir(&p).into_iter().flatten().flatten().filter(visible);
+                out.extend(sub.map(|e| e.path()).filter(|p| is_prog(p)));
+            } else if is_prog(&p) {
+                out.push(p);
+            }
+        }
+    }
+    out.sort_by_key(|p| (p.file_stem().map(|s| s.to_string_lossy().to_lowercase()), p.clone()));
+    out.dedup();
+    out
+}
+
 /// The name a program goes by: its first global label, as in the lists.
 fn prog_name(bytes: &[u8], names: &Names) -> String {
     state::split(focal::decode(bytes, names)).first().map_or_else(String::new, |p| p.name())
@@ -457,9 +505,10 @@ enum Tab {
     Modules,
     Setups,
     Keys,
+    Library,
 }
 
-const TABS: [(Tab, &str); 7] = [
+const TABS: [(Tab, &str); 8] = [
     (Tab::Programs, "Programs"),
     (Tab::Registers, "Registers"),
     (Tab::Flags, "Flags"),
@@ -467,6 +516,7 @@ const TABS: [(Tab, &str); 7] = [
     (Tab::Modules, "Modules"),
     (Tab::Setups, "Setups"),
     (Tab::Keys, "Keys"),
+    (Tab::Library, "Library"),
 ];
 
 struct App {
@@ -486,6 +536,9 @@ struct App {
     xmarks: Vec<u8>,
     keys: Vec<keys::Assigned>,
     cst: Vec<(String, Vec<(String, String)>)>,
+    /// The programs in the folders ~/.dm41/library names, read the first
+    /// time the Library tab opens.
+    lib: Option<Vec<PathBuf>>,
     /// dm41 mounted the calculator's disk, so it unmounts it on quit.
     attached: bool,
     tab: Tab,
@@ -544,6 +597,7 @@ impl App {
             xmarks: vec![],
             keys: vec![],
             cst: vec![],
+            lib: None,
             attached,
             tab: Tab::Programs,
             sel: 0,
@@ -590,6 +644,10 @@ impl App {
                 self.path = p;
                 self.st = s;
                 self.sel = 0;
+                self.lib = None;
+                if self.tab == Tab::Library {
+                    self.go(Tab::Library);
+                }
                 self.pick_setup(self.setup);
                 self.note = format!("read {}", self.path.display());
                 if let Some(n) = off {
@@ -608,6 +666,7 @@ impl App {
             Tab::Setups => self.setups.len(),
             Tab::Flags => 56,
             Tab::Keys => self.keys.len(),
+            Tab::Library => self.lib.as_ref().map_or(0, |l| l.len()),
             _ => 0,
         }
     }
@@ -781,16 +840,22 @@ impl App {
             return;
         }
         let Some(path) = self.foot.ask_or_cancel(" Program file (.raw or a listing): ", "~/.dm41/prog/") else { return };
-        let path = expand(&path);
-        let bytes = match std::fs::read(&path) {
-            Ok(b) if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("raw")) => b,
-            Ok(b) => match focal::encode(&String::from_utf8_lossy(&b), &self.names) {
-                Ok(b) => b,
-                Err(e) => return self.note = format!("{}: {e}", path.display()),
-            },
-            Err(e) => return self.note = format!("{}: {e}", path.display()),
-        };
-        self.put_program(state::program_bytes(&bytes));
+        self.load_path(&expand(&path));
+    }
+
+    /// Load the program picked in the Library into the setup.
+    fn load_library(&mut self) {
+        let Some(path) = self.lib.as_ref().and_then(|l| l.get(self.sel)).cloned() else { return };
+        if self.has_setup() {
+            self.load_path(&path);
+        }
+    }
+
+    fn load_path(&mut self, path: &Path) {
+        match program_file(path, &self.names) {
+            Ok(b) => self.put_program(state::program_bytes(&b)),
+            Err(e) => self.note = e,
+        }
     }
 
     /// Load a text file into the setup's X-Memory, a line to a record.
@@ -1001,6 +1066,7 @@ impl App {
         let keys = match self.tab {
             Tab::Programs => "e edit  r run in rpnx  s save .raw  l load a file  R read again  q quit",
             Tab::Xm => "e edit a text file  l load a text file  ↑↓ pick  q quit",
+            Tab::Library => "l load it into the setup  ↑↓ pick  PgUp/PgDn scroll  R read again  q quit",
             Tab::Modules => "Space plug in or out of the setup  ↑↓ pick  PgUp/PgDn scroll  q quit",
             Tab::Setups => "n new setup from this one  s copy it to the calculator  D delete it  ↑↓ pick  q quit",
             _ => "←→ tab  ↑↓ pick  PgUp/PgDn scroll  B back up the disk  R read again  q quit",
@@ -1047,16 +1113,7 @@ impl App {
                         if self.working_copy(p).exists() {
                             head.push_str(&style::fg("  working copy in ~/.dm41/prog", GOLD));
                         }
-                        let w = if p.steps.len() >= 100 { 3 } else { 2 };
-                        let lines: Vec<String> = p
-                            .steps
-                            .iter()
-                            .enumerate()
-                            .map(|(n, s)| {
-                                format!("{} {}", style::fg(&format!("{:0w$}", n + 1), DIM), colour_step(&s.text))
-                            })
-                            .collect();
-                        format!("{head}\n\n{}", lines.join("\n"))
+                        format!("{head}\n\n{}", numbered(&p.steps).join("\n"))
                     }
                     None => "No programs in memory.".into(),
                 };
@@ -1090,6 +1147,7 @@ impl App {
             Tab::Modules => self.render_modules(),
             Tab::Setups => self.render_setups(),
             Tab::Keys => self.render_keys(),
+            Tab::Library => self.render_library(),
             Tab::Registers => {
                 let mut left: Vec<String> = self
                     .st
@@ -1235,6 +1293,33 @@ impl App {
         (self.list(items), out.join("\n"))
     }
 
+    fn render_library(&self) -> (String, String) {
+        let files = self.lib.as_deref().unwrap_or_default();
+        let items = files
+            .iter()
+            .map(|p| (p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), 252))
+            .collect();
+        let Some(path) = files.get(self.sel) else {
+            let none = "No programs: name folders with .41 listings or .raw files in ~/.dm41/library, one a line.";
+            return (self.list(items), none.into());
+        };
+        let home = std::env::var("HOME").unwrap_or_default();
+        let shown = path.to_string_lossy().replacen(&home, "~", 1);
+        let right = match program_file(path, &self.names) {
+            Ok(b) => {
+                let steps = focal::decode(&b, &self.names);
+                let name = prog_name(&b, &self.names);
+                let head = format!("{}  {} lines  {}", style::bold(&name), steps.len(), style::fg(&shown, DIM));
+                format!("{head}\n\n{}", numbered(&steps).join("\n"))
+            }
+            Err(e) => {
+                let text = std::fs::read_to_string(path).unwrap_or_default();
+                format!("{}\n\n{text}", style::fg(&e.replacen(&home, "~", 1), 203))
+            }
+        };
+        (self.list(items), right)
+    }
+
     fn render_keys(&self) -> (String, String) {
         let items = self
             .keys
@@ -1344,6 +1429,9 @@ impl App {
     fn go(&mut self, tab: Tab) {
         self.tab = tab;
         self.sel = if tab == Tab::Setups { self.setup } else { 0 };
+        if tab == Tab::Library && self.lib.is_none() {
+            self.lib = Some(library_files(&home().join("library")));
+        }
     }
 
     fn run(&mut self) {
@@ -1357,7 +1445,7 @@ impl App {
                 "q" => break,
                 "LEFT" | "S-TAB" => self.switch(-1),
                 "RIGHT" | "TAB" => self.switch(1),
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" => self.go(TABS[key.parse::<usize>().unwrap_or(1) - 1].0),
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" => self.go(TABS[key.parse::<usize>().unwrap_or(1) - 1].0),
                 "UP" if self.count() > 0 => self.sel = self.sel.saturating_sub(1),
                 "DOWN" if self.count() > 0 => self.sel = (self.sel + 1).min(self.count() - 1),
                 "UP" => self.right.lineup(),
@@ -1370,6 +1458,7 @@ impl App {
                 "e" if self.tab == Tab::Xm => self.edit_text(),
                 "l" if self.tab == Tab::Programs => self.load_program(),
                 "l" if self.tab == Tab::Xm => self.load_text(),
+                "l" if self.tab == Tab::Library => self.load_library(),
                 "B" => self.note = backup_disk(),
                 "r" if self.tab == Tab::Programs => self.run_rpnx(),
                 "s" if self.tab == Tab::Programs => self.save(),
@@ -1471,8 +1560,7 @@ fn main() {
     let names = modules::names(&mods, setups.get(newest_setup(&setups)));
     if let Some(i) = flag("--encode") {
         let file = args.get(i + 1).unwrap_or_else(|| fail("--encode needs a listing file".into()));
-        let text = std::fs::read_to_string(file).unwrap_or_else(|e| fail(format!("{file}: {e}")));
-        let bytes = focal::encode(&text, &names).unwrap_or_else(|e| fail(e));
+        let bytes = program_file(Path::new(file), &names).unwrap_or_else(|e| fail(e));
         use std::io::Write;
         let _ = std::io::stdout().write_all(&bytes);
         return;
@@ -1523,6 +1611,25 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_library_finds_programs_in_folders_and_their_subfolders() {
+        let root = std::env::temp_dir().join(format!("dm41-lib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for f in ["a/b.41", "a/one/c.RAW", "a/one/deep/d.41", "a/.git/e.41", "a/notes.txt", "x/f.41"] {
+            std::fs::create_dir_all(root.join(f).parent().unwrap()).unwrap();
+            std::fs::write(root.join(f), "01 LBL \"T\"\n02 END\n").unwrap();
+        }
+        let cfg = root.join("library");
+        std::fs::write(&cfg, format!("# my programs\n{}\n\n", root.join("a").display())).unwrap();
+        let got: Vec<String> = library_files(&cfg).iter().map(|p| p.strip_prefix(&root).unwrap().display().to_string()).collect();
+        assert_eq!(got, ["a/b.41", "a/one/c.RAW"]);
+        assert!(library_files(&root.join("none")).is_empty());
+        // a listing with a byte order mark still makes bytes
+        std::fs::write(root.join("bom.41"), "\u{feff}01 LBL \"T\"\n02 END\n").unwrap();
+        assert!(program_file(&root.join("bom.41"), &focal::builtin_names()).is_ok());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn delete_moves_only_that_setup_and_keeps_a_copy() {

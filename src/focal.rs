@@ -38,6 +38,7 @@ pub fn from_hp_char(c: char) -> Option<u8> {
         ' '..='}' => Some(c as u8),
         'Σ' => Some(126),
         '⊢' => Some(127),
+        '↑' => Some(b'^'),
         _ => LOW
             .chars()
             .position(|x| x == c)
@@ -72,7 +73,7 @@ const ROW9: [&str; 16] = [
 const FLAGS: [&str; 6] = ["SF", "CF", "FS?C", "FC?C", "FS?", "FC?"];
 
 /// Other ways to write a name, as rpnx and older listings do.
-const ALIASES: [(&str, &str); 10] = [
+const ALIASES: [(&str, &str); 16] = [
     ("ENTER", "ENTER^"),
     ("X#0?", "X≠0?"),
     ("X!=0?", "X≠0?"),
@@ -83,6 +84,12 @@ const ALIASES: [(&str, &str); 10] = [
     ("X↑2", "X^2"),
     ("Y↑X", "Y^X"),
     ("R↑", "R^"),
+    ("RUP", "R^"),
+    ("ENTER↑", "ENTER^"),
+    ("SREG", "ΣREG"),
+    ("X#NN?", "X≠NN?"),
+    ("S+", "Σ+"),
+    ("S-", "Σ-"),
 ];
 
 /// Register and label names after the number range: A-J, the stack and
@@ -273,16 +280,19 @@ pub fn listing(steps: &[Step]) -> String {
     s
 }
 
-/// The instruction on a listing line, without its step number.
-fn body(line: &str) -> &str {
-    let t = line.trim();
+/// The instruction on a listing line, without its step number or a comment
+/// after a tab, and whether the line had a step number.
+fn body(line: &str) -> (bool, &str) {
+    let t = line.trim_start_matches('\u{feff}').trim();
     let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
     let rest = &t[digits..];
-    if digits >= 2 && (rest.starts_with([' ', '*', '▸']) || rest.is_empty()) {
-        rest.trim_start_matches(['*', '▸']).trim()
-    } else {
-        t
-    }
+    let numbered = digits >= 2 && (rest.starts_with([' ', '\t', '*', '▸']) || rest.is_empty());
+    // a mark before a global label, as in 01*LBL "AB"; a lone * multiplies
+    let t = match rest.trim_start() {
+        r if numbered => r.strip_prefix(['*', '▸']).filter(|x| x.trim_start().starts_with("LBL")).unwrap_or(r),
+        _ => t,
+    };
+    (numbered, t.split('\t').next().unwrap_or("").trim())
 }
 
 fn text_bytes(s: &str, max: usize) -> Result<Vec<u8>, String> {
@@ -304,7 +314,8 @@ fn unquote(s: &str) -> Option<&str> {
 }
 
 fn number_bytes(s: &str) -> Option<Vec<u8>> {
-    let t = s.replace(' ', "");
+    // some listings write the decimal point as a comma
+    let t = s.replace(' ', "").replace(',', ".");
     if t.is_empty() || !t.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | 'E' | '-')) {
         return None;
     }
@@ -328,7 +339,8 @@ fn number_bytes(s: &str) -> Option<Vec<u8>> {
             Some(d) => (true, d),
             None => (false, e),
         };
-        if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) || digits.len() > 2 {
+        // a lone E is EEX pressed with no digits after it
+        if !digits.chars().all(|c| c.is_ascii_digit()) || digits.len() > 2 {
             return None;
         }
         out.push(0x1B);
@@ -440,9 +452,11 @@ fn encode_one(t: &str, names: &Names) -> Result<Vec<u8>, String> {
 pub fn encode(text: &str, names: &Names) -> Result<Vec<u8>, String> {
     let mut out: Vec<u8> = Vec::new();
     let mut last_number = false;
+    // in a listing with step numbers, a line without one is a note
+    let numbered = text.lines().any(|l| body(l).0);
     for (n, line) in text.lines().enumerate() {
-        let t = body(line);
-        if t.is_empty() || t.starts_with('#') || t.starts_with(';') {
+        let (has_number, t) = body(line);
+        if t.is_empty() || t.starts_with('#') || t.starts_with(';') || numbered && !has_number {
             continue;
         }
         let bytes = encode_one(t, names).map_err(|e| format!("line {}: {e}", n + 1))?;
@@ -479,6 +493,15 @@ mod tests {
             assert!(seen.insert(c), "{b} repeats {c}");
             assert_eq!(from_hp_char(c), Some(b));
         }
+    }
+
+    #[test]
+    fn listings_from_other_places_read_too() {
+        // a note before the steps, a space before the label mark, a comment
+        // after a tab, a comma for the decimal point, a lone E, other spellings
+        let src = "\u{feff}AREA OF A CIRCLE\n001 *LBL \"AREA\"\n002 X^2\t; square it\n003 *\n004 3,5\n\
+                   005 E\n006 RUP\n007 s+\n008 \"A↑B\"\n009 END\n";
+        assert_eq!(round(src), "LBL \"AREA\"\nX^2\n*\n3.5\nE\nR^\nΣ+\n\"A^B\"\n.END.");
     }
 
     #[test]

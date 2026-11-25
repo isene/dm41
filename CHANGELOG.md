@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 (2026-11-25)
+
+- A Library tab: the `.41` listings and `.raw` files in the folders
+  `~/.dm41/library` names. `l` loads the picked one into the setup.
+- Listings from other places read too: `001 *LBL`, notes before the first
+  step, a comment after a tab, a comma for the decimal point, a byte order
+  mark, Latin-1 text, a lone `E`, and the spellings `RUP`, `ENTER↑`, `s+`,
+  `sREG` and `X#NN?`.
+
 ## 0.7.1 (2026-11-25)
 
 - Only `q` quits; Esc no longer does.
