@@ -1,5 +1,6 @@
 mod focal;
 mod modules;
+mod off;
 mod state;
 
 use crust::{style, Crust, Input, Pane};
@@ -18,6 +19,8 @@ const HELP: &str = "dm41: the memory of a SwissMicros DM41X in the terminal
   dm41 --encode LISTING     a listing as a .raw file, on stdout
   dm41 --mount              mount the calculator's disk for writing
   dm41 --unmount            unmount it, so the calculator can be unplugged
+  dm41 --off [DIR]          write the pictures ~/.dm41/off names to the
+                            calculator's OFFIMG folder, or to DIR
   -h, --help   -v, --version
 
 Keys: Left/Right tab, Up/Down pick, PgUp/PgDn scroll, R read again, q quit
@@ -45,7 +48,11 @@ Modules and setups (.m41 module lists) are copied from the disk to
 ~/.dm41/disk. A new setup goes to its MODS folder; load it on the
 calculator with Module menu, Load Modules, Load Flash and AM Lists.
 A setup with a memory of its own is written as a full backup in BACKUP;
-load it with Settings menu, Restore from Backup.";
+load it with Settings menu, Restore from Backup.
+
+~/.dm41/off names pictures for the calculator to show while it is off,
+one a line: moon [LAT LON], agenda (from tock) and photo FILE. dm41 makes
+them each time it finds the calculator's disk mounted for writing.";
 
 const HEAD_BG: u16 = 236;
 const PANEL_BG: u16 = 16;
@@ -564,6 +571,7 @@ impl App {
         if let Some((m, _)) = mount() {
             mirror(&m);
         }
+        let off = off_pictures();
         match load(None) {
             Ok((p, s)) => {
                 let name = self.setups.get(self.setup).map(|s| s.name.clone());
@@ -575,6 +583,9 @@ impl App {
                 self.sel = 0;
                 self.pick_setup(self.setup);
                 self.note = format!("read {}", self.path.display());
+                if let Some(n) = off {
+                    self.note = format!("{}; {n}", self.note);
+                }
             }
             Err(e) => self.note = e,
         }
@@ -1331,6 +1342,15 @@ impl App {
     }
 }
 
+/// Make the off pictures when the calculator's disk is mounted for
+/// writing and ~/.dm41/off asks for some; a note on what was written.
+fn off_pictures() -> Option<String> {
+    match mount() {
+        Some((m, true)) => off::refresh(&m.join("OFFIMG")),
+        _ => None,
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |f: &str| args.iter().position(|a| a == f);
@@ -1361,11 +1381,31 @@ fn main() {
         }
         return;
     }
+    if let Some(i) = flag("--off") {
+        let (dir, did) = match args.get(i + 1) {
+            Some(d) => (PathBuf::from(d), false),
+            None => {
+                let did = attach();
+                match mount() {
+                    Some((m, true)) => (m.join("OFFIMG"), did),
+                    _ => fail("the calculator's disk is not mounted for writing: plug it in, or give a folder".into()),
+                }
+            }
+        };
+        println!("{}", off::refresh(&dir).unwrap_or_else(|| "no ~/.dm41/off, so no pictures (see the README)".into()));
+        if did {
+            if let Err(e) = detach() {
+                eprintln!("dm41: {e}");
+            }
+        }
+        return;
+    }
     let tui = !args.iter().any(|a| a.starts_with("--"));
     let attached = tui && attach();
     if let Some((m, _)) = mount() {
         mirror(&m);
     }
+    let off = if tui { off_pictures() } else { None };
     let mods = modules::read_all(&disk().join("MODS"));
     let setups = modules::setups(&disk());
     let names = modules::names(&mods, setups.get(newest_setup(&setups)));
@@ -1406,6 +1446,9 @@ fn main() {
     Crust::init();
     Crust::set_app_identity("dm41");
     let mut app = App::new(path, st, mods, setups, attached);
+    if let Some(n) = off {
+        app.note = n;
+    }
     app.run();
     Crust::cleanup();
     Crust::clear_screen();

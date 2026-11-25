@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 (2026-11-25)
+
+- Pictures for the calculator to show while it is off: the Moon as it is
+  now, the next days from tock, and a photo. `~/.dm41/off` names them, and
+  dm41 writes them to the OFFIMG folder when the calculator's disk is
+  mounted for writing. `dm41 --off [DIR]` makes them on the command line.
+
 ## 0.5.0 (2026-11-25)
 
 - `D` in Setups deletes the picked setup from the calculator's disk, after a

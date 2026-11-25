@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(f.name_reg, 0x4E4F5445532020);
         assert!(text_file("X", "ok\nnot ☃").err().unwrap().contains("line 2"));
         assert!(text_file("X", &"a".repeat(255)).is_err());
-        let t = sample().with_xm(&[f.clone()]).unwrap();
+        let t = sample().with_xm(std::slice::from_ref(&f)).unwrap();
         assert_eq!(xm_lines(&t.xm_files()[0], &Names::new()), xm_lines(&f, &Names::new()));
     }
 

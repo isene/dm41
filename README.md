@@ -111,6 +111,28 @@ must be mounted for writing.
 saved, as a state file or a full backup, so save one first. To go back,
 copy the files back to the disk.
 
+## Pictures for when it is off
+
+The calculator shows a picture from its OFFIMG folder while it is off,
+the next one each time it is turned off. dm41 can make three: the Moon
+as it is now, your next days from tock, and a photo. Name the ones you
+want in `~/.dm41/off`, one a line:
+
+```
+moon 51.48 0.00            the Moon, rising and setting at this latitude and longitude
+agenda                     the next days from tock --agenda
+photo ~/Pictures/me.jpg    a PNG or JPEG photo, cut to fill the screen
+```
+
+dm41 makes them when it starts, and on `R`, with the calculator's disk
+mounted for writing. They are `dm41-moon.bmp`, `dm41-agenda.bmp` and
+`dm41-photo.bmp`. A picture is written only when it changed, and other
+pictures in the folder stay. A photo with strong light and shade works
+best, since the screen has only black and white. `dm41 --off DIR` puts
+the pictures in a folder instead, to look at first.
+
+![The Moon and the agenda, as the calculator shows them while it is off](img/off.png)
+
 ## On the command line
 
 ```
@@ -120,6 +142,7 @@ dm41 --xm NAME [FILE.d41]     what an X-Memory file holds
 dm41 --encode LISTING         a listing as a .raw file, on stdout
 dm41 --mount                  mount the calculator's disk for writing
 dm41 --unmount                unmount it, so the calculator can be unplugged
+dm41 --off [DIR]              write the pictures ~/.dm41/off names to the calculator, or to DIR
 ```
 
 ## Mounting without a password
