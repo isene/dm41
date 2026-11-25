@@ -1354,7 +1354,7 @@ impl App {
             };
             let note = std::mem::take(&mut self.note);
             match key.as_str() {
-                "q" | "ESC" => break,
+                "q" => break,
                 "LEFT" | "S-TAB" => self.switch(-1),
                 "RIGHT" | "TAB" => self.switch(1),
                 "1" | "2" | "3" | "4" | "5" | "6" | "7" => self.go(TABS[key.parse::<usize>().unwrap_or(1) - 1].0),

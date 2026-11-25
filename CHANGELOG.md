@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1 (2026-11-25)
+
+- Only `q` quits; Esc no longer does.
+
 ## 0.7.0 (2026-11-25)
 
 - A Keys tab: the DM41X keyboard with the functions and programs USER mode

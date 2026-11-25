@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "dm41"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "ab_glyph",
  "fe2o3-crust",
