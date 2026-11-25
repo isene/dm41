@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1 (2026-11-25)
+
+- The printer's functions (PRA, PRX, ACA and the rest, XROM 29) have
+  their names when the setup plugs in the DM41X's own PRINTER module.
+
 ## 0.8.0 (2026-11-25)
 
 - A Library tab: the `.41` listings and `.raw` files in the folders

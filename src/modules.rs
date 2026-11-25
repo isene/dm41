@@ -217,6 +217,12 @@ pub fn names(mods: &[Module], setup: Option<&Setup>) -> Names {
     let mut names = focal::builtin_names();
     let Some(s) = setup else { return names };
     for (_, entry) in s.lines.iter().filter(|(k, _)| *k == 'A') {
+        // the printer lives in the calculator's flash, not on its disk
+        if file_of(entry).eq_ignore_ascii_case("PRINTER.mod") {
+            for (f, n) in focal::PRINTER.iter().enumerate().skip(1) {
+                names.entry((29, f as u8)).or_insert_with(|| n.to_string());
+            }
+        }
         let Some(m) = mods.iter().find(|m| m.file.eq_ignore_ascii_case(file_of(entry))) else {
             continue;
         };
@@ -296,6 +302,15 @@ mod tests {
         assert_eq!(n[&(7, 1)], "AB?");
         assert_eq!(n[&(7, 2)], "FOO");
         assert!(!n.contains_key(&(7, 0)));
+    }
+
+    #[test]
+    fn the_printer_names_come_only_when_it_is_plugged_in() {
+        let plugged = Setup::parse(Path::new("x.m41"), "A PRINTER.mod\n", false);
+        let n = names(&[], Some(&plugged));
+        assert_eq!((n[&(29, 8)].as_str(), n[&(29, 20)].as_str()), ("PRA", "PRX"));
+        let in_flash = Setup::parse(Path::new("x.m41"), "N PRINTER.mod\n", false);
+        assert!(!names(&[], Some(&in_flash)).contains_key(&(29, 8)));
     }
 
     #[test]

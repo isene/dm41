@@ -4,7 +4,7 @@
 
 **Your DM41X calculator in the terminal: programs, memory and modules. Written in Rust.**
 
-![Version](https://img.shields.io/badge/version-0.8.0-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
+![Version](https://img.shields.io/badge/version-0.8.1-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
 
 A twin of the [SwissMicros DM41X](https://www.swissmicros.com) calculator in
 the terminal. It shows the programs, registers, flags and X-Memory files from
@@ -184,8 +184,9 @@ you ALL=(root) NOPASSWD: /usr/bin/mount -o rw\,uid\=1000\,gid\=1000 /dev/disk/by
 
 A listing has one step per line, with or without step numbers, using the
 HP-41's own names (`X^2`, `ENTER^`, `"⊢TEXT"` for an append). Functions of
-the 41CX and of the setup's modules are known by name; functions of other
-modules show as `XROM 05,03` and can be written that way.
+the 41CX, of the setup's modules and of the printer (once the setup plugs it
+in) are known by name; functions of other modules show as `XROM 05,03` and
+can be written that way.
 
 ## Build
 

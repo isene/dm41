@@ -119,6 +119,14 @@ const TIME: [&str; 36] = [
     "STOPSW", "SW", "T+X", "TIME", "XYZALM", "-CX TIME", "CLALMA", "CLALMX", "CLRALMS", "RCLALM", "SWPT",
 ];
 
+/// The printer module, XROM 29, which the DM41X keeps in flash as
+/// PRINTER.mod. The IR printer's later functions, from 29,25 on, are left out.
+pub const PRINTER: [&str; 25] = [
+    "-PRINTER", "ACA", "ACCHR", "ACCOL", "ACSPEC", "ACX", "BLDSPEC", "LIST", "PRA", "PRAXIS", "PRBUF", "PRFLAGS",
+    "PRKEYS", "PRP", "PRPLOT", "PRPLOTP", "PRREG", "PRREGX", "PRΣ", "PRSTK", "PRX", "REGPLOT", "SKPCHR", "SKPCOL",
+    "STKPLOT",
+];
+
 pub fn builtin_names() -> Names {
     let table = |m: u8, t: &[&str]| -> Vec<((u8, u8), String)> {
         t.iter().enumerate().filter(|(_, n)| !n.starts_with('-')).map(|(f, n)| ((m, f as u8), n.to_string())).collect()
